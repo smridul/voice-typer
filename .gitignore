@@ -1,0 +1,6 @@
+venv/
+config.py
+voicetyper.log
+__pycache__/
+*.pyc
+.DS_Store
