@@ -1,0 +1,76 @@
+import json
+import os
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+DEFAULT_CONTEXT_LANGUAGE = "en"
+DEFAULT_OUTPUT_LANGUAGE = "en"
+LANGUAGE_LABELS = {"en": "English", "hi": "Hindi"}
+LANGUAGE_CODES_BY_LABEL = {"English": "en", "Hindi": "hi"}
+
+
+@dataclass(frozen=True)
+class LanguageSettings:
+    context_language: str
+    output_language: str
+
+
+def _sanitize_language(code, fallback):
+    return code if code in LANGUAGE_LABELS else fallback
+
+
+def _default_settings():
+    return LanguageSettings(
+        context_language=DEFAULT_CONTEXT_LANGUAGE,
+        output_language=DEFAULT_OUTPUT_LANGUAGE,
+    )
+
+
+def load_settings(path):
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
+        return _default_settings()
+
+    if not isinstance(payload, dict):
+        return _default_settings()
+
+    return LanguageSettings(
+        context_language=_sanitize_language(
+            payload.get("context_language"),
+            DEFAULT_CONTEXT_LANGUAGE,
+        ),
+        output_language=_sanitize_language(
+            payload.get("output_language"),
+            DEFAULT_OUTPUT_LANGUAGE,
+        ),
+    )
+
+
+def save_settings(path, settings):
+    payload = {
+        "context_language": settings.context_language,
+        "output_language": settings.output_language,
+    }
+    settings_path = Path(path)
+    temp_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=settings_path.parent,
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(json.dumps(payload))
+
+        os.replace(temp_path, settings_path)
+    except Exception:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+        raise

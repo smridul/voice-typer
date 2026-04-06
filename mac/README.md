@@ -1,73 +1,64 @@
 # VoiceTyper Mac
 
-Speak and your words appear wherever your cursor is — in any app, any text field.
+Menu bar app for voice typing on macOS.
 
-## How it works
+Speak, stop recording, and the transcript is pasted at the current cursor position.
 
-1. App sits in your Mac menubar as 🎙️
-2. Press **Ctrl+Space** to start recording → icon turns 🔴
-3. Press **Ctrl+Space** again to stop → icon turns ⏳
-4. Whisper transcribes your speech and it's automatically pasted at your cursor
+## Local Setup
 
-## Setup
+1. Copy `config.example.py` to `config.py`.
+2. Put your local API key in `config.py`.
+3. Install dependencies:
 
-**1. Get a Groq API key**
-Go to https://console.groq.com/keys and create a key.
-
-**2. Run setup**
 ```bash
-cd ~/code/voice-typer-mac
 bash setup.sh
 ```
 
-**3. Add your API key**
+4. Start the app:
+
 ```bash
-open config.py
-# Replace the placeholder with your real Groq key
+venv/bin/VoiceTyper
 ```
 
-**4. Install as login item (starts automatically on login)**
+5. Optional: install it as a login item:
+
 ```bash
 bash install-launch.sh
 ```
 
-**5. Grant macOS permissions when prompted**
-- **Accessibility** — System Settings → Privacy & Security → Accessibility → enable `VoiceTyper`
-- **Input Monitoring** — System Settings → Privacy & Security → Input Monitoring → enable `VoiceTyper`
-- **Microphone** — macOS will prompt automatically
+## Secrets
 
-The `VoiceTyper` binary is at `venv/bin/VoiceTyper` — use Cmd+Shift+G in the file picker to navigate there.
+- Real local config:
+  `config.py`
+- Template:
+  `config.example.py`
+- `config.py` is gitignored and should not be committed.
 
-## Scripts
+## How It Works
 
-| Script | What it does |
-|--------|-------------|
-| `setup.sh` | One-time install of Python dependencies |
-| `install-launch.sh` | Install as macOS login item and start immediately |
-| `uninstall-launch.sh` | Remove the login item |
-| `restart.sh` | Quick restart |
+1. The app sits in the menu bar.
+2. Press the configured hotkey to start recording.
+3. Press it again to stop.
+4. Audio is sent to Groq for transcription.
+5. The result is pasted at the current cursor.
 
-## Changing the hotkey
+## Permissions
 
-Open `main.py` and edit this line near the top:
-```python
-HOTKEY = "<ctrl>+<space>"
-```
+Grant these when prompted by macOS:
 
-Other examples:
-- `"<cmd>+<shift>+v"` — Cmd+Shift+V
-- `"<f5>"` — F5 key
-- `"<ctrl>+r"` — Ctrl+R
+- Accessibility
+- Input Monitoring
+- Microphone
 
 ## Files
 
-| File | What it does |
-|------|-------------|
-| `main.py` | The whole app |
-| `config.py` | Your API key (never commit this) |
-| `config.example.py` | Template for config.py |
-| `requirements.txt` | Python dependencies |
-| `com.voicetyper.plist` | macOS launchd config |
+- `main.py` — app entry point
+- `config.py` — local secret config
+- `config.example.py` — config template
+- `requirements.txt` — Python dependencies
+- `install-launch.sh` — install as login item
+- `restart.sh` — restart helper
+- `uninstall-launch.sh` — remove login item
 
 ## Logs
 

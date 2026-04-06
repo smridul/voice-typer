@@ -1,0 +1,6 @@
+DerivedData/
+xcuserdata/
+*.xcuserstate
+build/
+.swiftpm/
+Config/LocalSecrets.xcconfig
