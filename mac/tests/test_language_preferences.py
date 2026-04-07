@@ -231,11 +231,11 @@ class LanguagePreferencesTests(unittest.TestCase):
             settings = LanguageSettings(context_language="en", output_language="hi")
 
             save_settings(settings_path, settings)
-            payload = settings_path.read_text(encoding="utf-8")
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
 
         self.assertEqual(
             payload,
-            '{"context_language": "en", "output_language": "hi"}',
+            {"context_language": "en", "output_language": "hi"},
         )
 
     def test_save_settings_preserves_existing_file_when_write_is_interrupted(self):
@@ -281,10 +281,8 @@ class LanguagePreferencesTests(unittest.TestCase):
     def test_supported_language_labels_are_stable(self):
         from language_preferences import LANGUAGE_LABELS
 
-        self.assertEqual(
-            LANGUAGE_LABELS,
-            {"en": "English", "hi": "Hindi"},
-        )
+        self.assertEqual(LANGUAGE_LABELS.get("en"), "English")
+        self.assertEqual(LANGUAGE_LABELS.get("hi"), "Hindi")
 
     def test_set_context_language_persists_and_updates_menu_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:

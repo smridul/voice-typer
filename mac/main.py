@@ -6,8 +6,8 @@ Hold Ctrl+Space to record your voice.
 Release to transcribe and type the text wherever your cursor is.
 
 Setup:
-    1. Run: pip install -r requirements.txt
-    2. Run: python main.py
+    1. Run: python3 -m pip install -r requirements.txt
+    2. Run: python3 main.py
     3. Use "Set API Key…" in the menu bar app to save your Groq API key
     4. Allow Accessibility access when macOS prompts you
 """
