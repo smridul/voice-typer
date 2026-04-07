@@ -11,6 +11,18 @@ if [ ! -d "$SOURCE_APP" ]; then
     exit 1
 fi
 
+if [ -e "$TARGET_APP" ]; then
+    if [ ! -w "$TARGET_APP" ]; then
+        echo "❌ Cannot replace $TARGET_APP (permission denied)." >&2
+        echo "Re-run with sufficient privileges, for example: sudo bash $SCRIPT_DIR/install-app.sh" >&2
+        exit 1
+    fi
+elif [ ! -w "/Applications" ]; then
+    echo "❌ Cannot install to /Applications (permission denied)." >&2
+    echo "Re-run with sufficient privileges, for example: sudo bash $SCRIPT_DIR/install-app.sh" >&2
+    exit 1
+fi
+
 if [ -d "$TARGET_APP" ]; then
     rm -rf "$TARGET_APP"
 fi

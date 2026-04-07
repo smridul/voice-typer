@@ -13,8 +13,12 @@ INSTALLED_APP_EXECUTABLE = "/Applications/VoiceTyper.app/Contents/MacOS/VoiceTyp
 class InstallLaunchScriptTests(unittest.TestCase):
     def test_fails_when_installed_app_bundle_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp_home:
+            nonexistent_executable = (
+                Path(tmp_home) / "not-installed" / "VoiceTyper.app" / "Contents" / "MacOS" / "VoiceTyper"
+            )
             env = os.environ.copy()
             env["HOME"] = tmp_home
+            env["VOICETYPER_APP_EXECUTABLE_CHECK"] = str(nonexistent_executable)
 
             result = subprocess.run(
                 ["bash", str(SCRIPT_PATH)],

@@ -35,7 +35,7 @@ def patch_info_plist(plist_path: Path) -> None:
     with plist_path.open("rb") as plist_file:
         plist_data = plistlib.load(plist_file)
 
-    plist_data["LSUIElement"] = "1"
+    plist_data["LSUIElement"] = True
     plist_data["CFBundleDisplayName"] = APP_NAME
     plist_data["NSMicrophoneUsageDescription"] = NS_MICROPHONE_USAGE_DESCRIPTION
 

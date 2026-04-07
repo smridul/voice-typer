@@ -3,6 +3,7 @@
 set -euo pipefail
 
 APP_EXECUTABLE="/Applications/VoiceTyper.app/Contents/MacOS/VoiceTyper"
+# Test-only seam: allows overriding only the existence check path in automated tests.
 APP_EXECUTABLE_CHECK="${VOICETYPER_APP_EXECUTABLE_CHECK:-$APP_EXECUTABLE}"
 PLIST_DST="$HOME/Library/LaunchAgents/com.voicetyper.plist"
 LOG_PATH="$HOME/Library/Logs/VoiceTyper.log"

@@ -36,11 +36,11 @@ class BuildAppTests(unittest.TestCase):
             with plist_path.open("rb") as plist_file:
                 patched = plistlib.load(plist_file)
 
-        self.assertEqual(patched["LSUIElement"], "1")
+        self.assertIs(patched["LSUIElement"], True)
         self.assertEqual(patched["CFBundleDisplayName"], build_app.APP_NAME)
         self.assertEqual(
             patched["NSMicrophoneUsageDescription"],
-            "VoiceTyper needs microphone access to transcribe speech.",
+            build_app.NS_MICROPHONE_USAGE_DESCRIPTION,
         )
 
     @patch("build_app.patch_info_plist")
