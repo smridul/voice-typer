@@ -12,10 +12,13 @@ Speak, stop recording, and the transcript is pasted at the current cursor positi
 bash setup.sh
 ```
 
-You can run setup non-interactively by exporting `GROQ_API_KEY` first:
+You can also run setup non-interactively by setting `GROQ_API_KEY` in the environment first:
 
 ```bash
-GROQ_API_KEY=gsk_... bash setup.sh
+read -r -s -p "Enter GROQ API key: " GROQ_API_KEY; echo
+export GROQ_API_KEY
+bash setup.sh
+unset GROQ_API_KEY
 ```
 
 2. Build the app bundle:

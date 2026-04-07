@@ -2,6 +2,8 @@
 # VoiceTyper Mac — one-time setup script
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 echo "🎙️  VoiceTyper Mac Setup"
 echo "========================"
 
@@ -16,14 +18,16 @@ echo "✅ Python found: $(python3 --version)"
 # Install dependencies
 echo ""
 echo "📦 Installing dependencies..."
-python3 -m pip install -r requirements.txt
+python3 -m pip install -r "$SCRIPT_DIR/requirements.txt"
 
 echo ""
 if [ -n "${GROQ_API_KEY:-}" ]; then
     api_key="$GROQ_API_KEY"
     echo "🔐 Using GROQ_API_KEY from environment."
 else
-    read -r -s -p "🔐 Enter GROQ API key: " api_key
+    if ! read -r -s -p "🔐 Enter GROQ API key: " api_key; then
+        api_key=""
+    fi
     echo ""
 fi
 
@@ -32,7 +36,7 @@ if [ -z "$api_key" ]; then
     exit 1
 fi
 
-printf '%s' "$api_key" | python3 -c '
+printf '%s' "$api_key" | PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 -c '
 import sys
 from keychain import save_api_key
 

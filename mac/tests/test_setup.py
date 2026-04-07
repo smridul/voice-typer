@@ -17,15 +17,16 @@ class SetupScriptTests(unittest.TestCase):
             python_args_log = home_path / "python-args.log"
             python_stdin_log = home_path / "python-stdin.log"
 
-            (home_path / "requirements.txt").write_text("", encoding="utf-8")
-
             fake_python = bin_path / "python3"
             fake_python.write_text(
                 textwrap.dedent(
                     f"""\
                     #!/bin/bash
                     set -e
-                    echo "$@" >> "{python_args_log}"
+                    for arg in "$@"; do
+                        printf '%s\n' "$arg" >> "{python_args_log}"
+                    done
+                    printf '%s\n' '---' >> "{python_args_log}"
 
                     if [ "$1" = "--version" ]; then
                         echo "Python 3.12.0"
@@ -68,7 +69,14 @@ class SetupScriptTests(unittest.TestCase):
             self.assertIn("Using GROQ_API_KEY from environment", result.stdout)
 
             args_text = python_args_log.read_text(encoding="utf-8")
-            self.assertIn("-m pip install -r requirements.txt", args_text)
+            self.assertIn("-m", args_text)
+            self.assertIn("pip", args_text)
+            self.assertIn("install", args_text)
+            self.assertIn("-r", args_text)
+            self.assertIn(
+                str(SCRIPT_PATH.parent / "requirements.txt"),
+                args_text,
+            )
             self.assertIn("-c", args_text)
             self.assertNotIn(api_key, args_text)
 
