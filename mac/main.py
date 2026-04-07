@@ -2,8 +2,8 @@
 """
 voice-typer-mac
 ---------------
-Hold Ctrl+Space to record your voice.
-Release to transcribe and type the text wherever your cursor is.
+Press Ctrl+Space to start recording your voice.
+Press it again to transcribe and type the text wherever your cursor is.
 
 Setup:
     1. Run: python3 -m pip install -r requirements.txt

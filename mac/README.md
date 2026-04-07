@@ -77,5 +77,5 @@ Grant these permissions to `VoiceTyper.app` in macOS Privacy & Security:
 ## Logs
 
 ```bash
-tail -f voicetyper.log
+tail -f ~/Library/Logs/VoiceTyper.log
 ```

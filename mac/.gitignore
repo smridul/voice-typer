@@ -1,6 +1,10 @@
 venv/
 config.py
 voicetyper.log
+VoiceTyper.log
 __pycache__/
 *.pyc
 .DS_Store
+build/
+dist/
+VoiceTyper.spec
