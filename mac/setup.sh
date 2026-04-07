@@ -1,6 +1,6 @@
 #!/bin/bash
 # VoiceTyper Mac — one-time setup script
-set -e
+set -euo pipefail
 
 echo "🎙️  VoiceTyper Mac Setup"
 echo "========================"
@@ -16,26 +16,38 @@ echo "✅ Python found: $(python3 --version)"
 # Install dependencies
 echo ""
 echo "📦 Installing dependencies..."
-pip3 install -r requirements.txt
+python3 -m pip install -r requirements.txt
 
-# Check for config.py
-if [ ! -f config.py ]; then
-    echo ""
-    echo "⚠️  No config.py found. Creating from template..."
-    cp config.example.py config.py
-    echo "👉 Open config.py and paste your OpenAI API key, then run:"
-    echo "   python3 main.py"
+echo ""
+if [ -n "${GROQ_API_KEY:-}" ]; then
+    api_key="$GROQ_API_KEY"
+    echo "🔐 Using GROQ_API_KEY from environment."
 else
+    read -r -s -p "🔐 Enter GROQ API key: " api_key
     echo ""
-    echo "✅ config.py found."
-    echo ""
-    echo "🚀 Ready! Run the app with:"
-    echo "   python3 main.py"
 fi
+
+if [ -z "$api_key" ]; then
+    echo "❌ GROQ API key is required." >&2
+    exit 1
+fi
+
+printf '%s' "$api_key" | python3 -c '
+import sys
+from keychain import save_api_key
+
+secret = sys.stdin.read()
+if not secret:
+    raise SystemExit("Missing GROQ API key")
+save_api_key(secret)
+'
+
+unset api_key
+echo "✅ API key saved to macOS Keychain."
 
 echo ""
 echo "📋 First-time macOS permissions needed:"
 echo "   • Microphone access — macOS will prompt automatically"
 echo "   • Accessibility access — go to:"
 echo "     System Settings → Privacy & Security → Accessibility"
-echo "     and enable Terminal (or your Python runner)"
+echo "     and enable VoiceTyper.app"

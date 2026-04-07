@@ -4,35 +4,45 @@ Menu bar app for voice typing on macOS.
 
 Speak, stop recording, and the transcript is pasted at the current cursor position.
 
-## Local Setup
+## App Bundle Setup
 
-1. Copy `config.example.py` to `config.py`.
-2. Put your local API key in `config.py`.
-3. Install dependencies:
+1. Run setup (installs dependencies and stores API key in Keychain):
 
 ```bash
 bash setup.sh
 ```
 
-4. Start the app:
+You can run setup non-interactively by exporting `GROQ_API_KEY` first:
 
 ```bash
-venv/bin/VoiceTyper
+GROQ_API_KEY=gsk_... bash setup.sh
 ```
 
-5. Optional: install it as a login item:
+2. Build the app bundle:
+
+```bash
+bash build-app.sh
+```
+
+3. Install the app bundle to `/Applications`:
+
+```bash
+bash install-app.sh
+```
+
+If `/Applications` requires elevated permissions, re-run with `sudo`.
+
+4. Optional: install launch-at-login agent:
 
 ```bash
 bash install-launch.sh
 ```
 
-## Secrets
+## Storage
 
-- Real local config:
-  `config.py`
-- Template:
-  `config.example.py`
-- `config.py` is gitignored and should not be committed.
+- API key is stored in macOS Keychain (`com.voicetyper.app` / `groq_api_key`).
+- App settings are stored at:
+  `~/Library/Application Support/VoiceTyper/settings.json`
 
 ## How It Works
 
@@ -44,7 +54,7 @@ bash install-launch.sh
 
 ## Permissions
 
-Grant these when prompted by macOS:
+Grant these permissions to `VoiceTyper.app` in macOS Privacy & Security:
 
 - Accessibility
 - Input Monitoring
@@ -53,10 +63,11 @@ Grant these when prompted by macOS:
 ## Files
 
 - `main.py` — app entry point
-- `config.py` — local secret config
-- `config.example.py` — config template
+- `setup.sh` — dependency install + Keychain API key setup
+- `build-app.sh` — builds `dist/VoiceTyper.app`
+- `install-app.sh` — installs app bundle into `/Applications`
+- `install-launch.sh` — installs launch agent for login auto-start
 - `requirements.txt` — Python dependencies
-- `install-launch.sh` — install as login item
 - `restart.sh` — restart helper
 - `uninstall-launch.sh` — remove login item
 
