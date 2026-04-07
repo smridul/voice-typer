@@ -7,8 +7,14 @@ APP_SUPPORT_SUBDIR = "VoiceTyper"
 SETTINGS_FILENAME = "settings.json"
 
 
+def _resolve_home_dir(home_dir: Path | str | None = None) -> Path:
+    if home_dir is None:
+        return Path.home()
+    return Path(home_dir).expanduser()
+
+
 def application_support_dir(home_dir: Path | str | None = None) -> Path:
-    home = Path(home_dir) if home_dir is not None else Path.home()
+    home = _resolve_home_dir(home_dir)
     return home / "Library" / "Application Support" / APP_SUPPORT_SUBDIR
 
 
