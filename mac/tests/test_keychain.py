@@ -42,6 +42,27 @@ class KeychainTests(unittest.TestCase):
         self.assertIsNone(result)
 
     @patch("keychain.subprocess.run")
+    def test_load_api_key_raises_with_stderr_message(self, run_mock):
+        run_mock.return_value = Mock(returncode=1, stdout="", stderr="boom\n")
+
+        with self.assertRaises(KeychainError) as ctx:
+            load_api_key()
+
+        self.assertEqual(str(ctx.exception), "boom")
+
+    @patch("keychain.subprocess.run")
+    def test_load_api_key_raises_with_fallback_message(self, run_mock):
+        run_mock.return_value = Mock(returncode=2, stdout="", stderr="\n")
+
+        with self.assertRaises(KeychainError) as ctx:
+            load_api_key()
+
+        self.assertEqual(
+            str(ctx.exception),
+            "Keychain find operation failed with exit code 2",
+        )
+
+    @patch("keychain.subprocess.run")
     def test_save_api_key_updates_existing_entry(self, run_mock):
         run_mock.return_value = Mock(returncode=0, stdout="", stderr="")
 
