@@ -17,6 +17,7 @@ import tempfile
 import wave
 import time
 import os
+import subprocess
 from pathlib import Path
 
 import rumps
@@ -33,39 +34,71 @@ from language_preferences import (
     save_settings,
 )
 from language_processing import convert_transcript
-
-# ── Config ────────────────────────────────────────────────────────────────────
-try:
-    from config import GROQ_API_KEY
-except ImportError:
-    raise SystemExit("❌ config.py not found. Copy config.example.py → config.py and add your API key.")
+from app_paths import migrate_legacy_settings_if_needed
+from keychain import KeychainError, load_api_key, save_api_key
 
 SAMPLE_RATE = 16000   # Hz — Whisper works best at 16kHz
 CHANNELS    = 1
 HOTKEY      = "<ctrl>+<space>"   # Change this if you prefer a different combo
-SETTINGS_PATH = Path(__file__).with_name("settings.json")
+
+
+def prompt_for_api_key():
+    script = (
+        'display dialog "Enter Groq API key" default answer "" '
+        'with hidden answer buttons {"Cancel", "Save"} default button "Save"'
+    )
+
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        print(f"❌ Failed to open API key prompt: {error}")
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    marker = "text returned:"
+    if marker not in result.stdout:
+        return None
+
+    value = result.stdout.split(marker, 1)[1].strip()
+    return value or None
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
 class VoiceTyper(rumps.App):
     def __init__(self):
         super().__init__("VoiceTyper", icon=None, quit_button="Quit")
-        self.settings = load_settings(SETTINGS_PATH)
+        self._settings_path = migrate_legacy_settings_if_needed(
+            repo_dir=Path(__file__).resolve().parent
+        )
+        self.settings = load_settings(self._settings_path)
         self.title = "🎙️"
         self._status_item = rumps.MenuItem("Status: Ready")
+        self._set_api_key_item = rumps.MenuItem(
+            "Set API Key…",
+            callback=self._set_api_key,
+        )
         self._context_language_items = {}
         self._output_language_items = {}
         self.menu = [
             self._status_item,
+            self._set_api_key_item,
             None,
             *self._build_language_menu(),
         ]
         self._refresh_language_menu()
 
-        self.client    = Groq(api_key=GROQ_API_KEY)
+        self.client    = None
         self.recording = False
         self.frames    = []
         self._stream   = None
+        self._refresh_client_state(notify=False)
 
         # Start the global hotkey listener in a background thread
         self._hotkey_listener = keyboard.GlobalHotKeys({
@@ -101,7 +134,7 @@ class VoiceTyper(rumps.App):
 
     def _save_and_apply_settings(self, updated_settings):
         try:
-            save_settings(SETTINGS_PATH, updated_settings)
+            save_settings(self._settings_path, updated_settings)
         except OSError as error:
             self._refresh_language_menu()
             print(f"❌ Failed to save settings: {error}")
@@ -137,10 +170,57 @@ class VoiceTyper(rumps.App):
     # ── Hotkey handler ────────────────────────────────────────────────────────
     def _on_hotkey(self):
         """Called every time the hotkey fires (press = toggle)."""
+        if self.client is None:
+            rumps.notification(
+                "VoiceTyper",
+                "Setup Required",
+                "Set API Key… from the menu before recording.",
+            )
+            return
+
         if not self.recording:
             threading.Thread(target=self._start_recording, daemon=True).start()
         else:
             threading.Thread(target=self._stop_and_transcribe, daemon=True).start()
+
+    def _refresh_client_state(self, notify):
+        try:
+            api_key = load_api_key()
+        except KeychainError as error:
+            self.client = None
+            self._status_item.title = "Status: API key required"
+            rumps.notification("VoiceTyper", "Error", str(error))
+            return False
+
+        if not api_key:
+            self.client = None
+            self._status_item.title = "Status: API key required"
+            if notify:
+                rumps.notification(
+                    "VoiceTyper",
+                    "Setup Required",
+                    "Set API Key… from the menu before recording.",
+                )
+            return False
+
+        self.client = Groq(api_key=api_key)
+        self._status_item.title = "Status: Ready"
+        if notify:
+            rumps.notification("VoiceTyper", "Ready", "API key updated.")
+        return True
+
+    def _set_api_key(self, _sender):
+        api_key = prompt_for_api_key()
+        if not api_key:
+            return
+
+        try:
+            save_api_key(api_key)
+        except KeychainError as error:
+            rumps.notification("VoiceTyper", "Error", str(error))
+            return
+
+        self._refresh_client_state(notify=True)
 
     # ── Recording ─────────────────────────────────────────────────────────────
     def _start_recording(self):
@@ -171,6 +251,10 @@ class VoiceTyper(rumps.App):
 
         self.title = "⏳"  # Hourglass while transcribing
         self._status_item.title = "Status: Transcribing…"
+
+        if self.client is None:
+            self._reset_status()
+            return
 
         if not self.frames:
             self._reset_status()
@@ -226,7 +310,9 @@ class VoiceTyper(rumps.App):
     # ── Helpers ───────────────────────────────────────────────────────────────
     def _reset_status(self):
         self.title = "🎙️"
-        self._status_item.title = "Status: Ready"
+        self._status_item.title = (
+            "Status: Ready" if self.client is not None else "Status: API key required"
+        )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

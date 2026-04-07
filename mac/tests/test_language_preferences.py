@@ -88,7 +88,12 @@ class FakeGroqClient:
         )
 
 
-def load_main_module(notifications):
+def load_main_module(
+    notifications,
+    *,
+    migrated_settings_path=None,
+    initial_api_key="test-key",
+):
     fake_rumps = types.ModuleType("rumps")
     fake_rumps.MenuItem = FakeMenuItem
     fake_rumps.App = FakeApp
@@ -119,8 +124,35 @@ def load_main_module(notifications):
     fake_groq = types.ModuleType("groq")
     fake_groq.Groq = FakeGroqClient
 
-    fake_config = types.ModuleType("config")
-    fake_config.GROQ_API_KEY = "test-key"
+    if migrated_settings_path is None:
+        migrated_settings_path = (
+            Path(tempfile.gettempdir())
+            / f"voice-typer-settings-{len(notifications)}-{id(notifications)}.json"
+        )
+
+    keychain_state = {
+        "api_key": initial_api_key,
+        "saved_keys": [],
+    }
+
+    fake_app_paths = types.ModuleType("app_paths")
+    fake_app_paths.migrate_legacy_settings_if_needed = (
+        lambda home_dir=None, repo_dir=None: Path(migrated_settings_path)
+    )
+
+    fake_keychain = types.ModuleType("keychain")
+
+    class FakeKeychainError(Exception):
+        pass
+
+    fake_keychain.KeychainError = FakeKeychainError
+    fake_keychain.load_api_key = lambda: keychain_state["api_key"]
+
+    def save_api_key(api_key):
+        keychain_state["api_key"] = api_key
+        keychain_state["saved_keys"].append(api_key)
+
+    fake_keychain.save_api_key = save_api_key
 
     main_path = Path(__file__).resolve().parents[1] / "main.py"
     module_name = f"voice_typer_main_test_{len(notifications)}_{id(notifications)}"
@@ -136,13 +168,16 @@ def load_main_module(notifications):
             "pynput": fake_pynput,
             "pynput.keyboard": fake_keyboard,
             "groq": fake_groq,
-            "config": fake_config,
+            "app_paths": fake_app_paths,
+            "keychain": fake_keychain,
         },
     ):
         spec = importlib.util.spec_from_file_location(module_name, main_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
+    module._test_keychain_state = keychain_state
+    module._test_settings_path = Path(migrated_settings_path)
     return module
 
 
@@ -252,11 +287,13 @@ class LanguagePreferencesTests(unittest.TestCase):
         )
 
     def test_set_context_language_persists_and_updates_menu_state(self):
-        notifications = []
-        main = load_main_module(notifications)
-
         with tempfile.TemporaryDirectory() as tmpdir:
-            main.SETTINGS_PATH = Path(tmpdir) / "settings.json"
+            notifications = []
+            settings_path = Path(tmpdir) / "settings.json"
+            main = load_main_module(
+                notifications,
+                migrated_settings_path=settings_path,
+            )
             app = main.VoiceTyper()
 
             app._set_context_language(app._context_language_items["hi"])
@@ -266,7 +303,7 @@ class LanguagePreferencesTests(unittest.TestCase):
                 LanguageSettings(context_language="hi", output_language="en"),
             )
             self.assertEqual(
-                json.loads(main.SETTINGS_PATH.read_text(encoding="utf-8")),
+                json.loads(settings_path.read_text(encoding="utf-8")),
                 {"context_language": "hi", "output_language": "en"},
             )
             self.assertEqual(app._context_language_items["hi"].state, 1)
@@ -279,11 +316,13 @@ class LanguagePreferencesTests(unittest.TestCase):
             ("_set_output_language", "_output_language_items"),
         ):
             with self.subTest(setter_name=setter_name):
-                notifications = []
-                main = load_main_module(notifications)
-
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    main.SETTINGS_PATH = Path(tmpdir) / "settings.json"
+                    notifications = []
+                    settings_path = Path(tmpdir) / "settings.json"
+                    main = load_main_module(
+                        notifications,
+                        migrated_settings_path=settings_path,
+                    )
                     app = main.VoiceTyper()
                     original_settings = app.settings
                     main.save_settings = lambda path, settings: (_ for _ in ()).throw(
@@ -297,18 +336,20 @@ class LanguagePreferencesTests(unittest.TestCase):
                     self.assertEqual(app._context_language_items["hi"].state, 0)
                     self.assertEqual(app._output_language_items["en"].state, 1)
                     self.assertEqual(app._output_language_items["hi"].state, 0)
-                    self.assertFalse(main.SETTINGS_PATH.exists())
+                    self.assertFalse(settings_path.exists())
                     self.assertEqual(len(notifications), 1)
                     self.assertEqual(notifications[0][0], "VoiceTyper")
                     self.assertEqual(notifications[0][1], "Error")
                     self.assertIn("disk full", notifications[0][2])
 
     def test_stop_and_transcribe_uses_settings_snapshot(self):
-        notifications = []
-        main = load_main_module(notifications)
-
         with tempfile.TemporaryDirectory() as tmpdir:
-            main.SETTINGS_PATH = Path(tmpdir) / "settings.json"
+            notifications = []
+            settings_path = Path(tmpdir) / "settings.json"
+            main = load_main_module(
+                notifications,
+                migrated_settings_path=settings_path,
+            )
             app = main.VoiceTyper()
             app.settings = LanguageSettings(context_language="hi", output_language="en")
             app.frames = [object()]
@@ -361,11 +402,13 @@ class LanguagePreferencesTests(unittest.TestCase):
             self.assertEqual(notifications, [])
 
     def test_stop_and_transcribe_resets_status_when_temp_audio_creation_fails(self):
-        notifications = []
-        main = load_main_module(notifications)
-
         with tempfile.TemporaryDirectory() as tmpdir:
-            main.SETTINGS_PATH = Path(tmpdir) / "settings.json"
+            notifications = []
+            settings_path = Path(tmpdir) / "settings.json"
+            main = load_main_module(
+                notifications,
+                migrated_settings_path=settings_path,
+            )
             app = main.VoiceTyper()
             app.frames = [object()]
             typed_text = []
@@ -386,6 +429,36 @@ class LanguagePreferencesTests(unittest.TestCase):
             self.assertEqual(notifications[0][0], "VoiceTyper")
             self.assertEqual(notifications[0][1], "Error")
             self.assertIn("disk full", notifications[0][2])
+
+    def test_missing_keychain_api_key_keeps_app_in_setup_required_state(self):
+        notifications = []
+        main = load_main_module(notifications, initial_api_key=None)
+        app = main.VoiceTyper()
+
+        self.assertIsNone(app.client)
+        self.assertEqual(app.title, "🎙️")
+        self.assertEqual(app._status_item.title, "Status: API key required")
+
+        app._on_hotkey()
+
+        self.assertFalse(app.recording)
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0][0], "VoiceTyper")
+        self.assertEqual(notifications[0][1], "Setup Required")
+        self.assertIn("Set API Key", notifications[0][2])
+
+    def test_setting_api_key_updates_keychain_and_client(self):
+        notifications = []
+        main = load_main_module(notifications, initial_api_key=None)
+        app = main.VoiceTyper()
+        main.prompt_for_api_key = lambda: "new-test-key"
+
+        app._set_api_key(None)
+
+        self.assertEqual(main._test_keychain_state["saved_keys"], ["new-test-key"])
+        self.assertIsNotNone(app.client)
+        self.assertEqual(app.client.api_key, "new-test-key")
+        self.assertEqual(app._status_item.title, "Status: Ready")
 
 
 if __name__ == "__main__":
