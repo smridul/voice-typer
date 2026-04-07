@@ -6,9 +6,9 @@ Hold Ctrl+Space to record your voice.
 Release to transcribe and type the text wherever your cursor is.
 
 Setup:
-    1. Add your OpenAI API key to config.py (copy from config.example.py)
-    2. Run: pip install -r requirements.txt
-    3. Run: python main.py
+    1. Run: pip install -r requirements.txt
+    2. Run: python main.py
+    3. Use "Set API Key…" in the menu bar app to save your Groq API key
     4. Allow Accessibility access when macOS prompts you
 """
 
