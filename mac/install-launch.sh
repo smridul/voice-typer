@@ -2,11 +2,12 @@
 # Install VoiceTyper as a macOS Launch Agent (starts on login)
 set -euo pipefail
 
-APP_EXECUTABLE="${VOICETYPER_APP_EXECUTABLE:-/Applications/VoiceTyper.app/Contents/MacOS/VoiceTyper}"
+APP_EXECUTABLE="/Applications/VoiceTyper.app/Contents/MacOS/VoiceTyper"
+APP_EXECUTABLE_CHECK="${VOICETYPER_APP_EXECUTABLE_CHECK:-$APP_EXECUTABLE}"
 PLIST_DST="$HOME/Library/LaunchAgents/com.voicetyper.plist"
 LOG_PATH="$HOME/Library/Logs/VoiceTyper.log"
 
-if [ ! -x "$APP_EXECUTABLE" ]; then
+if [ ! -x "$APP_EXECUTABLE_CHECK" ]; then
     echo "❌ Missing installed app executable at $APP_EXECUTABLE" >&2
     echo "Run: bash $(cd "$(dirname "$0")" && pwd)/install-app.sh" >&2
     exit 1

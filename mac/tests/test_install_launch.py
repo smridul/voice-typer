@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "install-launch.sh"
+INSTALLED_APP_EXECUTABLE = "/Applications/VoiceTyper.app/Contents/MacOS/VoiceTyper"
 
 
 class InstallLaunchScriptTests(unittest.TestCase):
@@ -25,7 +26,7 @@ class InstallLaunchScriptTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "Missing installed app executable at /Applications/VoiceTyper.app/Contents/MacOS/VoiceTyper",
+            f"Missing installed app executable at {INSTALLED_APP_EXECUTABLE}",
             result.stderr,
         )
 
@@ -46,7 +47,7 @@ class InstallLaunchScriptTests(unittest.TestCase):
             env = os.environ.copy()
             env["HOME"] = str(home_path)
             env["PATH"] = f"{tmp_bin}:{env['PATH']}"
-            env["VOICETYPER_APP_EXECUTABLE"] = str(app_executable)
+            env["VOICETYPER_APP_EXECUTABLE_CHECK"] = str(app_executable)
 
             result = subprocess.run(
                 ["bash", str(SCRIPT_PATH)],
@@ -63,7 +64,7 @@ class InstallLaunchScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(
             plist_data["ProgramArguments"][0],
-            str(app_executable),
+            INSTALLED_APP_EXECUTABLE,
         )
 
 
