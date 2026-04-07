@@ -47,13 +47,15 @@ class KeychainTests(unittest.TestCase):
     @patch("keychain._update_existing_password")
     def test_save_api_key_updates_existing_entry(self, update_mock, find_mock, add_mock):
         add_mock.return_value = KEYCHAIN_DUPLICATE_ITEM
-        find_mock.return_value = (0, "item-ref")
+        sentinel = object()
+        find_mock.return_value = (0, sentinel)
         update_mock.return_value = 0
 
         save_api_key("new-secret")
 
         add_mock.assert_called_once_with(b"new-secret")
-        update_mock.assert_called_once_with("item-ref", b"new-secret")
+        update_mock.assert_called_once_with(sentinel, b"new-secret")
+        find_mock.assert_called_once()
 
     @patch("keychain._status_message")
     @patch("keychain._add_generic_password")

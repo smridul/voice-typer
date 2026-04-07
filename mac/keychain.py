@@ -45,7 +45,7 @@ class _SecurityAPI:
         security_path = find_library("Security")
         core_path = find_library("CoreFoundation")
         if not security_path or not core_path:
-            raise RuntimeError("Security frameworks are unavailable")
+            raise KeychainError("Security frameworks are unavailable")
 
         cls.security = ctypes.CDLL(security_path)
         cls.core = ctypes.CDLL(core_path)
@@ -103,6 +103,11 @@ class _SecurityAPI:
 
         core.CFStringGetCString.argtypes = [c_void_p, c_char_p, c_long, c_uint32]
         core.CFStringGetCString.restype = c_bool
+
+        core.CFStringGetLength.argtypes = [c_void_p]
+        core.CFStringGetLength.restype = c_long
+        core.CFStringGetMaximumSizeForEncoding.argtypes = [c_long, c_uint32]
+        core.CFStringGetMaximumSizeForEncoding.restype = c_long
 
         core.CFRelease.argtypes = [c_void_p]
         core.CFRelease.restype = None
@@ -253,11 +258,14 @@ def _status_message(status: int) -> str | None:
         if ptr:
             return ptr.decode("utf-8")
 
-        buffer = create_string_buffer(256)
+        length = core.CFStringGetLength(message_ref)
+        approx = core.CFStringGetMaximumSizeForEncoding(length, _KCFSTRING_ENCODING_UTF8)
+        size = max(int(approx) + 1, 256) if approx and approx > 0 else 256
+        buffer = create_string_buffer(size)
         success = core.CFStringGetCString(
             message_ref,
             buffer,
-            ctypes.sizeof(buffer),
+            size,
             _KCFSTRING_ENCODING_UTF8,
         )
         if success:
