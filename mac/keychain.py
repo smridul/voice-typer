@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import subprocess
 from ctypes import (
     POINTER,
     byref,
@@ -115,6 +116,11 @@ class _SecurityAPI:
 
 def load_api_key() -> str | None:
     """Return the stored API key or None when the item is missing."""
+    try:
+        return _load_api_key_with_security_cli()
+    except FileNotFoundError:
+        pass
+
     status, secret = _find_generic_password()
 
     if status == 0:
@@ -128,6 +134,12 @@ def load_api_key() -> str | None:
 
 def save_api_key(api_key: str) -> None:
     """Write or update the API key in the Keychain."""
+    try:
+        _save_api_key_with_security_cli(api_key)
+        return
+    except FileNotFoundError:
+        pass
+
     api_key_bytes = api_key.encode("utf-8")
 
     status = _add_generic_password(api_key_bytes)
@@ -140,6 +152,55 @@ def save_api_key(api_key: str) -> None:
 
     if status != 0:
         raise KeychainError(_format_error(status, "Keychain write operation"))
+
+
+def _load_api_key_with_security_cli() -> str | None:
+    result = _run_security(
+        [
+            "find-generic-password",
+            "-w",
+            "-a",
+            KEYCHAIN_ACCOUNT,
+            "-s",
+            KEYCHAIN_SERVICE,
+        ]
+    )
+
+    if result.returncode == 0:
+        return result.stdout.rstrip("\n")
+
+    if result.returncode == 44:
+        return None
+
+    raise KeychainError(result.stderr.strip() or f"security find-generic-password failed with status {result.returncode}")
+
+
+def _save_api_key_with_security_cli(api_key: str) -> None:
+    result = _run_security(
+        [
+            "add-generic-password",
+            "-U",
+            "-a",
+            KEYCHAIN_ACCOUNT,
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-w",
+        ],
+        input_text=f"{api_key}\n{api_key}\n",
+    )
+
+    if result.returncode != 0:
+        raise KeychainError(result.stderr.strip() or f"security add-generic-password failed with status {result.returncode}")
+
+
+def _run_security(args: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["security", *args],
+        input=input_text,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 def _find_generic_password() -> tuple[int, str | None]:

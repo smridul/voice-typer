@@ -2,14 +2,15 @@
 # Install VoiceTyper as a macOS Launch Agent (starts on login)
 set -euo pipefail
 
-APP_EXECUTABLE="/Applications/VoiceTyper.app/Contents/MacOS/VoiceTyper"
+APP_BUNDLE="/Applications/VoiceTyper.app"
+APP_BINARY="$APP_BUNDLE/Contents/MacOS/VoiceTyper"
 # Test-only seam: allows overriding only the existence check path in automated tests.
-APP_EXECUTABLE_CHECK="${VOICETYPER_APP_EXECUTABLE_CHECK:-$APP_EXECUTABLE}"
+APP_BINARY_CHECK="${VOICETYPER_APP_BINARY_CHECK:-$APP_BINARY}"
 PLIST_DST="$HOME/Library/LaunchAgents/com.voicetyper.plist"
 LOG_PATH="$HOME/Library/Logs/VoiceTyper.log"
 
-if [ ! -x "$APP_EXECUTABLE_CHECK" ]; then
-    echo "❌ Missing installed app executable at $APP_EXECUTABLE" >&2
+if [ ! -x "$APP_BINARY_CHECK" ]; then
+    echo "❌ Missing installed app executable at $APP_BINARY" >&2
     echo "Run: bash $(cd "$(dirname "$0")" && pwd)/install-app.sh" >&2
     exit 1
 fi
@@ -26,7 +27,7 @@ cat > "$PLIST_DST" <<EOF
     <string>com.voicetyper</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$APP_EXECUTABLE</string>
+        <string>$APP_BINARY</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -45,6 +46,7 @@ launchctl bootout gui/$(id -u) "$PLIST_DST" 2>/dev/null || true
 
 # Load and start immediately
 launchctl bootstrap gui/$(id -u) "$PLIST_DST"
+launchctl kickstart -k gui/$(id -u)/com.voicetyper
 
 echo "✅ VoiceTyper installed as launch agent."
 echo "   It will start automatically on login."

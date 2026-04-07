@@ -73,14 +73,29 @@ class FakeHotKeys:
         self.started = True
 
 
+class FakeTimer:
+    def __init__(self, callback, interval):
+        self.callback = callback
+        self.interval = interval
+        self.started = False
+        self.stopped = False
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.stopped = True
+
+
 class FakeAudioArray:
     def tobytes(self):
         return b"fake-audio"
 
 
 class FakeGroqClient:
-    def __init__(self, api_key):
+    def __init__(self, api_key, **kwargs):
         self.api_key = api_key
+        self.kwargs = kwargs
         self.audio = types.SimpleNamespace(
             transcriptions=types.SimpleNamespace(
                 create=lambda **kwargs: types.SimpleNamespace(text=""),
@@ -93,10 +108,16 @@ def load_main_module(
     *,
     migrated_settings_path=None,
     initial_api_key="test-key",
+    hotkey_permission=True,
+    hotkey_prompt_result=False,
+    default_devices=(0, 1),
+    available_devices=None,
+    input_stream_factory=None,
 ):
     fake_rumps = types.ModuleType("rumps")
     fake_rumps.MenuItem = FakeMenuItem
     fake_rumps.App = FakeApp
+    fake_rumps.Timer = FakeTimer
     fake_rumps.notification = (
         lambda app_name, title, message: notifications.append(
             (app_name, title, message)
@@ -104,13 +125,23 @@ def load_main_module(
     )
 
     fake_sounddevice = types.ModuleType("sounddevice")
-    fake_sounddevice.InputStream = lambda **kwargs: FakeStream()
+    if available_devices is None:
+        available_devices = [
+            {"name": "Fake Mic", "max_input_channels": 1},
+            {"name": "Fake Speakers", "max_input_channels": 0},
+        ]
+    if input_stream_factory is None:
+        input_stream_factory = lambda **kwargs: FakeStream()
+    fake_sounddevice.InputStream = input_stream_factory
+    fake_sounddevice.default = types.SimpleNamespace(device=list(default_devices))
+    fake_sounddevice.query_devices = lambda: available_devices
 
     fake_numpy = types.ModuleType("numpy")
     fake_numpy.concatenate = lambda frames, axis=0: FakeAudioArray()
 
+    clipboard_state = {"value": None}
     fake_pyperclip = types.ModuleType("pyperclip")
-    fake_pyperclip.copy = lambda text: None
+    fake_pyperclip.copy = lambda text: clipboard_state.__setitem__("value", text)
 
     fake_pyautogui = types.ModuleType("pyautogui")
     fake_pyautogui.hotkey = lambda *keys: None
@@ -123,6 +154,7 @@ def load_main_module(
 
     fake_groq = types.ModuleType("groq")
     fake_groq.Groq = FakeGroqClient
+    fake_groq.AuthenticationError = type("AuthenticationError", (Exception,), {})
 
     if migrated_settings_path is None:
         migrated_settings_path = (
@@ -176,12 +208,77 @@ def load_main_module(
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
+    module.has_hotkey_permission = lambda: hotkey_permission
+    module.prompt_for_hotkey_permission = lambda: hotkey_prompt_result
     module._test_keychain_state = keychain_state
     module._test_settings_path = Path(migrated_settings_path)
+    module._test_clipboard_state = clipboard_state
     return module
 
 
 class LanguagePreferencesTests(unittest.TestCase):
+    def test_start_recording_uses_first_input_device_when_default_missing(self):
+        notifications = []
+        stream_calls = []
+        main = load_main_module(
+            notifications,
+            default_devices=(-1, -1),
+            available_devices=[
+                {"name": "Fake Speakers", "max_input_channels": 0},
+                {"name": "Fake Mic", "max_input_channels": 1},
+            ],
+            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(),
+        )
+        app = main.VoiceTyper()
+
+        app._start_recording()
+
+        self.assertTrue(app.recording)
+        self.assertEqual(app.title, "🔴")
+        self.assertEqual(app._status_item.title, "Status: Recording…")
+        self.assertEqual(stream_calls[0]["device"], 1)
+
+    def test_start_recording_resets_status_when_stream_creation_fails(self):
+        notifications = []
+        main = load_main_module(
+            notifications,
+            input_stream_factory=lambda **kwargs: (_ for _ in ()).throw(OSError("No input device")),
+        )
+        app = main.VoiceTyper()
+
+        app._start_recording()
+
+        self.assertFalse(app.recording)
+        self.assertEqual(app.title, "🎙️")
+        self.assertEqual(app._status_item.title, "Status: Ready")
+        self.assertEqual(app.frames, [])
+        self.assertEqual(app._stream, None)
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0][0], "VoiceTyper")
+        self.assertEqual(notifications[0][1], "Error")
+        self.assertIn("No input device", notifications[0][2])
+
+    def test_start_recording_stops_when_microphone_permission_not_granted(self):
+        notifications = []
+        stream_calls = []
+        main = load_main_module(
+            notifications,
+            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(),
+        )
+        main.request_microphone_permission = lambda: False
+        app = main.VoiceTyper()
+
+        app._start_recording()
+
+        self.assertFalse(app.recording)
+        self.assertEqual(app.title, "🎙️")
+        self.assertEqual(app._status_item.title, "Status: Ready")
+        self.assertEqual(stream_calls, [])
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0][0], "VoiceTyper")
+        self.assertEqual(notifications[0][1], "Permissions Required")
+        self.assertIn("Microphone", notifications[0][2])
+
     def test_load_settings_returns_defaults_when_file_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             missing_path = Path(tmpdir) / "missing-settings.json"
@@ -428,6 +525,68 @@ class LanguagePreferencesTests(unittest.TestCase):
             self.assertEqual(notifications[0][1], "Error")
             self.assertIn("disk full", notifications[0][2])
 
+    def test_type_text_uses_osascript_paste_after_copying_clipboard(self):
+        notifications = []
+        main = load_main_module(notifications)
+        app = main.VoiceTyper()
+        run_calls = []
+
+        def fake_run(command, capture_output=False, text=False, check=False):
+            run_calls.append(
+                {
+                    "command": command,
+                    "capture_output": capture_output,
+                    "text": text,
+                    "check": check,
+                }
+            )
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch.object(main.subprocess, "run", side_effect=fake_run):
+            with patch.object(main.time, "sleep", return_value=None):
+                app._type_text("hello world")
+
+        self.assertEqual(main._test_clipboard_state["value"], "hello world")
+        self.assertEqual(
+            run_calls,
+            [
+                {
+                    "command": [
+                        "osascript",
+                        "-e",
+                        'tell application "System Events" to keystroke "v" using command down',
+                    ],
+                    "capture_output": True,
+                    "text": True,
+                    "check": False,
+                }
+            ],
+        )
+        self.assertEqual(notifications, [])
+
+    def test_type_text_keeps_clipboard_when_paste_command_fails(self):
+        notifications = []
+        main = load_main_module(notifications)
+        app = main.VoiceTyper()
+
+        with patch.object(
+            main.subprocess,
+            "run",
+            return_value=types.SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="Automation not allowed",
+            ),
+        ):
+            with patch.object(main.time, "sleep", return_value=None):
+                app._type_text("hello world")
+
+        self.assertEqual(main._test_clipboard_state["value"], "hello world")
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0][0], "VoiceTyper")
+        self.assertEqual(notifications[0][1], "Copied to Clipboard")
+        self.assertIn("Cmd+V", notifications[0][2])
+
     def test_missing_keychain_api_key_keeps_app_in_setup_required_state(self):
         notifications = []
         main = load_main_module(notifications, initial_api_key=None)
@@ -445,6 +604,48 @@ class LanguagePreferencesTests(unittest.TestCase):
         self.assertEqual(notifications[0][1], "Setup Required")
         self.assertIn("Set API Key", notifications[0][2])
 
+    def test_invalid_key_after_authentication_error_requires_new_key(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            notifications = []
+            settings_path = Path(tmpdir) / "settings.json"
+            main = load_main_module(
+                notifications,
+                migrated_settings_path=settings_path,
+            )
+            app = main.VoiceTyper()
+            app.frames = [object()]
+            app.client = types.SimpleNamespace(
+                audio=types.SimpleNamespace(
+                    transcriptions=types.SimpleNamespace(
+                        create=lambda **kwargs: (_ for _ in ()).throw(
+                            main.AuthenticationError("Invalid API Key")
+                        )
+                    )
+                )
+            )
+
+            app._stop_and_transcribe()
+
+            self.assertEqual(app._status_item.title, "Status: API key invalid")
+            self.assertTrue(app._api_key_invalid)
+            self.assertEqual(len(notifications), 1)
+            self.assertEqual(notifications[0][0], "VoiceTyper")
+            self.assertEqual(notifications[0][1], "Invalid API Key")
+            self.assertIn("Set API Key", notifications[0][2])
+
+    def test_hotkey_prompts_for_new_key_when_stored_key_is_invalid(self):
+        notifications = []
+        main = load_main_module(notifications)
+        app = main.VoiceTyper()
+        app._api_key_invalid = True
+
+        app._on_hotkey()
+
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0][0], "VoiceTyper")
+        self.assertEqual(notifications[0][1], "Setup Required")
+        self.assertIn("invalid", notifications[0][2].lower())
+
     def test_setting_api_key_updates_keychain_and_client(self):
         notifications = []
         main = load_main_module(notifications, initial_api_key=None)
@@ -456,6 +657,83 @@ class LanguagePreferencesTests(unittest.TestCase):
         self.assertEqual(main._test_keychain_state["saved_keys"], ["new-test-key"])
         self.assertIsNotNone(app.client)
         self.assertEqual(app.client.api_key, "new-test-key")
+        self.assertEqual(app._status_item.title, "Status: Ready")
+
+    def test_client_uses_request_timeout(self):
+        notifications = []
+        main = load_main_module(notifications)
+        app = main.VoiceTyper()
+
+        self.assertIsNotNone(app.client)
+        self.assertEqual(app.client.kwargs["timeout"], main.GROQ_REQUEST_TIMEOUT_SECONDS)
+
+    def test_stop_and_transcribe_notifies_when_transcript_is_empty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            notifications = []
+            settings_path = Path(tmpdir) / "settings.json"
+            main = load_main_module(
+                notifications,
+                migrated_settings_path=settings_path,
+            )
+            app = main.VoiceTyper()
+            app.frames = [object()]
+            typed_text = []
+            app._type_text = typed_text.append
+
+            app.client = types.SimpleNamespace(
+                audio=types.SimpleNamespace(
+                    transcriptions=types.SimpleNamespace(
+                        create=lambda **kwargs: types.SimpleNamespace(text="   ")
+                    )
+                )
+            )
+
+            app._stop_and_transcribe()
+
+            self.assertEqual(typed_text, [])
+            self.assertEqual(app.title, "🎙️")
+            self.assertEqual(app._status_item.title, "Status: Ready")
+            self.assertEqual(len(notifications), 1)
+            self.assertEqual(notifications[0][0], "VoiceTyper")
+            self.assertEqual(notifications[0][1], "No Speech Detected")
+            self.assertIn("longer", notifications[0][2])
+
+    def test_missing_hotkey_permission_warns_on_startup(self):
+        notifications = []
+        main = load_main_module(notifications, hotkey_permission=False)
+        prompts = []
+        main.prompt_for_hotkey_permission = lambda: prompts.append(True)
+
+        app = main.VoiceTyper()
+
+        self.assertEqual(app._status_item.title, "Status: Hotkey permission required")
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0][0], "VoiceTyper")
+        self.assertEqual(notifications[0][1], "Permissions Required")
+        self.assertIn("Accessibility", notifications[0][2])
+        self.assertIn("Input Monitoring", notifications[0][2])
+        self.assertIsNone(app._hotkey_listener)
+        self.assertTrue(app._hotkey_permission_timer.started)
+        self.assertEqual(prompts, [True])
+
+    def test_hotkey_listener_starts_after_permission_becomes_available(self):
+        notifications = []
+        permission_state = {"allowed": False}
+        main = load_main_module(notifications, hotkey_permission=False)
+        main.has_hotkey_permission = lambda: permission_state["allowed"]
+
+        app = main.VoiceTyper()
+
+        self.assertFalse(app._hotkey_enabled)
+        self.assertIsNone(app._hotkey_listener)
+
+        permission_state["allowed"] = True
+        app._refresh_hotkey_permission(None)
+
+        self.assertTrue(app._hotkey_enabled)
+        self.assertIsNotNone(app._hotkey_listener)
+        self.assertTrue(app._hotkey_listener.started)
+        self.assertTrue(app._hotkey_permission_timer.stopped)
         self.assertEqual(app._status_item.title, "Status: Ready")
 
 

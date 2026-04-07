@@ -18,15 +18,16 @@ import wave
 import time
 import os
 import subprocess
+import sys
+import ctypes
 from pathlib import Path
 
 import rumps
 import sounddevice as sd
 import numpy as np
 import pyperclip
-import pyautogui
 from pynput import keyboard
-from groq import Groq
+from groq import AuthenticationError, Groq
 from language_preferences import (
     LANGUAGE_LABELS,
     LanguageSettings,
@@ -40,6 +41,53 @@ from keychain import KeychainError, load_api_key, save_api_key
 SAMPLE_RATE = 16000   # Hz — Whisper works best at 16kHz
 CHANNELS    = 1
 HOTKEY      = "<ctrl>+<space>"   # Change this if you prefer a different combo
+MIC_PERMISSION_HELPER = "VoiceTyperMicPermission"
+GROQ_REQUEST_TIMEOUT_SECONDS = 30.0
+
+
+def has_hotkey_permission():
+    if sys.platform != "darwin":
+        return True
+
+    try:
+        application_services = ctypes.cdll.LoadLibrary(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+        )
+        application_services.AXIsProcessTrusted.restype = ctypes.c_bool
+        return bool(application_services.AXIsProcessTrusted())
+    except Exception as error:
+        print(f"⚠️ Unable to check macOS hotkey permission: {error}")
+        return True
+
+
+def prompt_for_hotkey_permission():
+    if sys.platform != "darwin":
+        return True
+
+    try:
+        subprocess.run(
+            [
+                "open",
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            ],
+            check=False,
+        )
+    except OSError as error:
+        print(f"⚠️ Unable to open Accessibility settings: {error}")
+
+    try:
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'display dialog "Enable VoiceTyper in Accessibility and Input Monitoring, then reopen the app." buttons {"OK"} default button "OK"',
+            ],
+            check=False,
+        )
+    except OSError as error:
+        print(f"⚠️ Unable to show Accessibility instructions: {error}")
+
+    return has_hotkey_permission()
 
 
 def prompt_for_api_key():
@@ -70,6 +118,46 @@ def prompt_for_api_key():
     return value or None
 
 
+def _microphone_permission_helper_path():
+    executable_dir = Path(sys.executable).resolve().parent
+    bundled_helper = executable_dir / MIC_PERMISSION_HELPER
+    if bundled_helper.exists():
+        return bundled_helper
+
+    repo_helper = Path(__file__).resolve().parent / MIC_PERMISSION_HELPER
+    if repo_helper.exists():
+        return repo_helper
+
+    return None
+
+
+def request_microphone_permission():
+    if sys.platform != "darwin":
+        return True
+
+    helper_path = _microphone_permission_helper_path()
+    if helper_path is None:
+        return True
+
+    try:
+        result = subprocess.run(
+            [str(helper_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        print(f"⚠️ Unable to request microphone permission: {error}")
+        return True
+
+    if result.returncode == 0:
+        return True
+
+    message = result.stderr.strip() or result.stdout.strip() or "Microphone access is required."
+    print(f"❌ Microphone permission not granted: {message}")
+    return False
+
+
 # ── App ───────────────────────────────────────────────────────────────────────
 class VoiceTyper(rumps.App):
     def __init__(self):
@@ -95,17 +183,25 @@ class VoiceTyper(rumps.App):
         self._refresh_language_menu()
 
         self.client    = None
+        self._api_key_invalid = False
         self.recording = False
         self.frames    = []
         self._stream   = None
+        self._hotkey_listener = None
+        self._hotkey_enabled = False
+        self._hotkey_permission_timer = rumps.Timer(self._refresh_hotkey_permission, 2)
         self._refresh_client_state(notify=False)
 
-        # Start the global hotkey listener in a background thread
-        self._hotkey_listener = keyboard.GlobalHotKeys({
-            HOTKEY: self._on_hotkey
-        })
-        self._hotkey_listener.daemon = True
-        self._hotkey_listener.start()
+        if not self._refresh_hotkey_permission():
+            prompt_for_hotkey_permission()
+            self._hotkey_permission_timer.start()
+            self._status_item.title = "Status: Hotkey permission required"
+            rumps.notification(
+                "VoiceTyper",
+                "Permissions Required",
+                "Grant Accessibility and Input Monitoring to VoiceTyper.app. VoiceTyper will start listening automatically once permission is available.",
+            )
+            print("❌ VoiceTyper hotkey listener not started: waiting for Accessibility/Input Monitoring permission.")
 
         print(f"✅ VoiceTyper running. Hold {HOTKEY} to record.")
 
@@ -170,6 +266,22 @@ class VoiceTyper(rumps.App):
     # ── Hotkey handler ────────────────────────────────────────────────────────
     def _on_hotkey(self):
         """Called every time the hotkey fires (press = toggle)."""
+        if not self._hotkey_enabled:
+            rumps.notification(
+                "VoiceTyper",
+                "Permissions Required",
+                "Grant Accessibility and Input Monitoring to VoiceTyper.app, then restart it.",
+            )
+            return
+
+        if self._api_key_invalid:
+            rumps.notification(
+                "VoiceTyper",
+                "Setup Required",
+                "Stored API key is invalid. Use Set API Key… before recording.",
+            )
+            return
+
         if self.client is None:
             rumps.notification(
                 "VoiceTyper",
@@ -194,7 +306,8 @@ class VoiceTyper(rumps.App):
 
         if not api_key:
             self.client = None
-            self._status_item.title = "Status: API key required"
+            self._api_key_invalid = False
+            self._status_item.title = self._idle_status_title()
             if notify:
                 rumps.notification(
                     "VoiceTyper",
@@ -203,8 +316,12 @@ class VoiceTyper(rumps.App):
                 )
             return False
 
-        self.client = Groq(api_key=api_key)
-        self._status_item.title = "Status: Ready"
+        self.client = Groq(
+            api_key=api_key,
+            timeout=GROQ_REQUEST_TIMEOUT_SECONDS,
+        )
+        self._api_key_invalid = False
+        self._status_item.title = self._idle_status_title()
         if notify:
             rumps.notification("VoiceTyper", "Ready", "API key updated.")
         return True
@@ -222,24 +339,95 @@ class VoiceTyper(rumps.App):
 
         self._refresh_client_state(notify=True)
 
+    def _start_hotkey_listener(self):
+        if self._hotkey_listener is not None:
+            return
+
+        self._hotkey_listener = keyboard.GlobalHotKeys({
+            HOTKEY: self._on_hotkey
+        })
+        self._hotkey_listener.daemon = True
+        self._hotkey_listener.start()
+        print("✅ VoiceTyper hotkey listener started.")
+
+    def _refresh_hotkey_permission(self, _sender=None):
+        if self._hotkey_listener is not None:
+            self._hotkey_enabled = True
+            if self._hotkey_permission_timer is not None:
+                self._hotkey_permission_timer.stop()
+            return True
+
+        self._hotkey_enabled = has_hotkey_permission()
+        if not self._hotkey_enabled:
+            self._status_item.title = self._idle_status_title()
+            return False
+
+        self._start_hotkey_listener()
+        self._reset_status()
+        if self._hotkey_permission_timer is not None:
+            self._hotkey_permission_timer.stop()
+        return True
+
+    def _resolve_input_device(self):
+        default_device = getattr(getattr(sd, "default", None), "device", None)
+        if isinstance(default_device, (list, tuple)) and default_device:
+            input_device = default_device[0]
+            if isinstance(input_device, int) and input_device >= 0:
+                return input_device
+        elif isinstance(default_device, int) and default_device >= 0:
+            return default_device
+
+        for index, device in enumerate(sd.query_devices()):
+            max_input_channels = 0
+            if hasattr(device, "get"):
+                max_input_channels = device.get("max_input_channels", 0)
+            else:
+                max_input_channels = getattr(device, "max_input_channels", 0)
+            if max_input_channels > 0:
+                return index
+
+        return None
+
     # ── Recording ─────────────────────────────────────────────────────────────
     def _start_recording(self):
-        self.recording = True
-        self.frames    = []
-        self.title     = "🔴"  # Red dot in menubar while recording
-        self._status_item.title = "Status: Recording…"
+        self.frames = []
+        if not request_microphone_permission():
+            self.recording = False
+            self._stream = None
+            self._reset_status()
+            rumps.notification(
+                "VoiceTyper",
+                "Permissions Required",
+                "Microphone access is required for VoiceTyper.app.",
+            )
+            return
 
         def callback(indata, frame_count, time_info, status):
             if self.recording:
                 self.frames.append(indata.copy())
 
-        self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=CHANNELS,
-            dtype="int16",
-            callback=callback,
-        )
-        self._stream.start()
+        try:
+            stream_kwargs = {
+                "samplerate": SAMPLE_RATE,
+                "channels": CHANNELS,
+                "dtype": "int16",
+                "callback": callback,
+            }
+            input_device = self._resolve_input_device()
+            if input_device is not None:
+                stream_kwargs["device"] = input_device
+
+            self._stream = sd.InputStream(**stream_kwargs)
+            self.recording = True
+            self.title = "🔴"  # Red dot in menubar while recording
+            self._status_item.title = "Status: Recording…"
+            self._stream.start()
+        except Exception as error:
+            self.recording = False
+            self._stream = None
+            self._reset_status()
+            print(f"❌ Failed to start recording: {error}")
+            rumps.notification("VoiceTyper", "Error", f"Failed to start recording: {error}")
 
     def _stop_and_transcribe(self):
         # Stop the stream
@@ -281,16 +469,41 @@ class VoiceTyper(rumps.App):
                     model="whisper-large-v3",
                     file=f,
                     language=selected_settings.context_language,
+                    timeout=GROQ_REQUEST_TIMEOUT_SECONDS,
                 )
             transcript = result.text.strip()
+            if not transcript:
+                rumps.notification(
+                    "VoiceTyper",
+                    "No Speech Detected",
+                    "VoiceTyper did not detect spoken text. Try speaking louder or for a little longer.",
+                )
+                return
+
             final_text = convert_transcript(
                 client=self.client,
                 transcript=transcript,
                 context_language=selected_settings.context_language,
                 output_language=selected_settings.output_language,
             )
-            if final_text:
-                self._type_text(final_text)
+            if not final_text:
+                rumps.notification(
+                    "VoiceTyper",
+                    "No Output Produced",
+                    "VoiceTyper finished processing but did not generate text.",
+                )
+                return
+
+            self._type_text(final_text)
+        except AuthenticationError:
+            self.client = None
+            self._api_key_invalid = True
+            self._reset_status()
+            rumps.notification(
+                "VoiceTyper",
+                "Invalid API Key",
+                "The stored Groq API key was rejected. Use Set API Key… and try again.",
+            )
         except Exception as e:
             print(f"❌ Transcription error: {e}")
             rumps.notification("VoiceTyper", "Error", str(e))
@@ -303,16 +516,45 @@ class VoiceTyper(rumps.App):
     def _type_text(self, text: str):
         """Copy text to clipboard and paste it at the cursor position."""
         pyperclip.copy(text)
-        time.sleep(0.15)             # Small pause so the clipboard settles
-        pyautogui.hotkey("command", "v")
+        time.sleep(0.15)  # Small pause so the clipboard settles
+
+        result = subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'tell application "System Events" to keystroke "v" using command down',
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            print(
+                "⚠️ Automatic paste failed after copying text to the clipboard: "
+                f"{result.stderr.strip() or result.stdout.strip() or 'unknown error'}"
+            )
+            rumps.notification(
+                "VoiceTyper",
+                "Copied to Clipboard",
+                "Automatic paste was blocked. Press Cmd+V manually.",
+            )
+            return
+
         print(f"✅ Typed: {text}")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+    def _idle_status_title(self):
+        if not self._hotkey_enabled:
+            return "Status: Hotkey permission required"
+        if self._api_key_invalid:
+            return "Status: API key invalid"
+        if self.client is None:
+            return "Status: API key required"
+        return "Status: Ready"
+
     def _reset_status(self):
         self.title = "🎙️"
-        self._status_item.title = (
-            "Status: Ready" if self.client is not None else "Status: API key required"
-        )
+        self._status_item.title = self._idle_status_title()
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

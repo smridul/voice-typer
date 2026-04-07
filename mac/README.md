@@ -41,6 +41,14 @@ If `/Applications` requires elevated permissions, re-run with `sudo`.
 bash install-launch.sh
 ```
 
+The launch agent starts the installed executable directly:
+
+```text
+/Applications/VoiceTyper.app/Contents/MacOS/VoiceTyper
+```
+
+That avoids the flaky LaunchServices `open` path and is the recommended setup for a new Mac.
+
 ## Storage
 
 - API key is stored in macOS Keychain (`com.voicetyper.app` / `groq_api_key`).
@@ -62,6 +70,24 @@ Grant these permissions to `VoiceTyper.app` in macOS Privacy & Security:
 - Accessibility
 - Input Monitoring
 - Microphone
+- Automation for `System Events`
+
+## New Mac Checklist
+
+On a new Mac, expect to do all of these once:
+
+1. Run `bash setup.sh`
+2. Build and install the app bundle
+3. Open VoiceTyper and set a valid Groq API key
+4. Allow Microphone access
+5. Allow Accessibility and Input Monitoring
+6. Allow Automation for `System Events` when macOS prompts for paste control
+
+If transcription fails silently after recording, the most common causes are:
+
+- invalid Groq API key
+- missing `System Events` automation permission
+- missing Accessibility or Input Monitoring permission
 
 ## Files
 
