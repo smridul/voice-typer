@@ -1,9 +1,9 @@
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from keychain import (
-    KEYCHAIN_ACCOUNT,
-    KEYCHAIN_SERVICE,
+    KEYCHAIN_DUPLICATE_ITEM,
+    KEYCHAIN_ITEM_NOT_FOUND,
     KeychainError,
     load_api_key,
     save_api_key,
@@ -11,85 +11,57 @@ from keychain import (
 
 
 class KeychainTests(unittest.TestCase):
-    @patch("keychain.subprocess.run")
-    def test_load_api_key_returns_secret(self, run_mock):
-        run_mock.return_value = Mock(returncode=0, stdout="secret\n", stderr="")
+    @patch("keychain._find_generic_password")
+    def test_load_api_key_returns_secret(self, find_mock):
+        find_mock.return_value = (0, "secret\n")
 
-        result = load_api_key()
+        self.assertEqual(load_api_key(), "secret")
 
-        self.assertEqual(result, "secret")
-        run_mock.assert_called_once_with(
-            [
-                "security",
-                "find-generic-password",
-                "-s",
-                KEYCHAIN_SERVICE,
-                "-a",
-                KEYCHAIN_ACCOUNT,
-                "-w",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+    @patch("keychain._find_generic_password")
+    def test_load_api_key_missing_returns_none(self, find_mock):
+        find_mock.return_value = (KEYCHAIN_ITEM_NOT_FOUND, None)
 
-    @patch("keychain.subprocess.run")
-    def test_load_api_key_missing_returns_none(self, run_mock):
-        run_mock.return_value = Mock(returncode=44, stdout="", stderr="")
+        self.assertIsNone(load_api_key())
 
-        result = load_api_key()
-
-        self.assertIsNone(result)
-
-    @patch("keychain.subprocess.run")
-    def test_load_api_key_raises_with_stderr_message(self, run_mock):
-        run_mock.return_value = Mock(returncode=1, stdout="", stderr="boom\n")
+    @patch("keychain._find_generic_password")
+    @patch("keychain._status_message")
+    def test_load_api_key_raises_on_error_status(self, status_mock, find_mock):
+        find_mock.return_value = (1, None)
+        status_mock.return_value = None
 
         with self.assertRaises(KeychainError) as ctx:
             load_api_key()
 
-        self.assertEqual(str(ctx.exception), "boom")
+        self.assertIn("status 1", str(ctx.exception))
 
-    @patch("keychain.subprocess.run")
-    def test_load_api_key_raises_with_fallback_message(self, run_mock):
-        run_mock.return_value = Mock(returncode=2, stdout="", stderr="\n")
-
-        with self.assertRaises(KeychainError) as ctx:
-            load_api_key()
-
-        self.assertEqual(
-            str(ctx.exception),
-            "Keychain find operation failed with exit code 2",
-        )
-
-    @patch("keychain.subprocess.run")
-    def test_save_api_key_updates_existing_entry(self, run_mock):
-        run_mock.return_value = Mock(returncode=0, stdout="", stderr="")
+    @patch("keychain._add_generic_password")
+    def test_save_api_key_adds_new_item(self, add_mock):
+        add_mock.return_value = 0
 
         save_api_key("new-secret")
 
-        run_mock.assert_called_once_with(
-            [
-                "security",
-                "add-generic-password",
-                "-U",
-                "-s",
-                KEYCHAIN_SERVICE,
-                "-a",
-                KEYCHAIN_ACCOUNT,
-                "-w",
-                "new-secret",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        add_mock.assert_called_once_with(b"new-secret")
 
-    @patch("keychain.subprocess.run")
-    def test_save_api_key_raises_on_failure(self, run_mock):
-        run_mock.return_value = Mock(returncode=1, stdout="", stderr="permission denied")
+    @patch("keychain._add_generic_password")
+    @patch("keychain._find_keychain_item_ref")
+    @patch("keychain._update_existing_password")
+    def test_save_api_key_updates_existing_entry(self, update_mock, find_mock, add_mock):
+        add_mock.return_value = KEYCHAIN_DUPLICATE_ITEM
+        find_mock.return_value = (0, "item-ref")
+        update_mock.return_value = 0
+
+        save_api_key("new-secret")
+
+        add_mock.assert_called_once_with(b"new-secret")
+        update_mock.assert_called_once_with("item-ref", b"new-secret")
+
+    @patch("keychain._status_message")
+    @patch("keychain._add_generic_password")
+    def test_save_api_key_raises_on_failure(self, add_mock, status_mock):
+        add_mock.return_value = 5
+        status_mock.return_value = None
 
         with self.assertRaises(KeychainError) as ctx:
             save_api_key("ignored")
 
-        self.assertIn("permission denied", str(ctx.exception))
+        self.assertIn("status 5", str(ctx.exception))
