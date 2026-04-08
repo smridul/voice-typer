@@ -96,6 +96,14 @@ def _contains_devanagari(text):
     return any("\u0900" <= character <= "\u097f" for character in text)
 
 
+def _contains_cjk(text):
+    return any(
+        "\u4e00" <= character <= "\u9fff"
+        or "\u3400" <= character <= "\u4dbf"
+        for character in text
+    )
+
+
 def _contains_latin(text):
     return any(
         ("a" <= character <= "z") or ("A" <= character <= "Z")
@@ -155,24 +163,69 @@ def _transliterate_hindi_to_latin(text):
     return "".join(pieces)
 
 
-def _conversion_messages(transcript, context_language, output_language):
-    if context_language == "en" and output_language == "hi":
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "Translate the text into natural Hindi written in Devanagari script. "
-                    "Preserve the meaning, make the result sound natural, and respond "
-                    "only in Devanagari script."
-                ),
-            },
-            {
-                "role": "user",
-                "content": transcript,
-            },
-        ]
+_TRANSLATION_PROMPTS = {
+    ("en", "hi"): (
+        "Translate the text into natural Hindi written in Devanagari script. "
+        "Preserve the meaning, make the result sound natural, and respond "
+        "only in Devanagari script."
+    ),
+    ("en", "es"): (
+        "Translate the text into natural Spanish. "
+        "Preserve the meaning and make the result sound natural."
+    ),
+    ("en", "zh"): (
+        "Translate the text into natural Simplified Chinese. "
+        "Preserve the meaning and make the result sound natural. "
+        "Respond only in Chinese characters."
+    ),
+    ("es", "en"): (
+        "Translate the text from Spanish into natural English. "
+        "Preserve the meaning and make the result sound natural."
+    ),
+    ("es", "hi"): (
+        "Translate the text from Spanish into natural Hindi written in Devanagari script. "
+        "Preserve the meaning, make the result sound natural, and respond "
+        "only in Devanagari script."
+    ),
+    ("es", "zh"): (
+        "Translate the text from Spanish into natural Simplified Chinese. "
+        "Preserve the meaning and make the result sound natural. "
+        "Respond only in Chinese characters."
+    ),
+    ("zh", "en"): (
+        "Translate the text from Chinese into natural English. "
+        "Preserve the meaning and make the result sound natural."
+    ),
+    ("zh", "hi"): (
+        "Translate the text from Chinese into natural Hindi written in Devanagari script. "
+        "Preserve the meaning, make the result sound natural, and respond "
+        "only in Devanagari script."
+    ),
+    ("zh", "es"): (
+        "Translate the text from Chinese into natural Spanish. "
+        "Preserve the meaning and make the result sound natural."
+    ),
+    ("hi", "es"): (
+        "Translate the text from Hindi into natural Spanish. "
+        "Preserve the meaning and make the result sound natural."
+    ),
+    ("hi", "zh"): (
+        "Translate the text from Hindi into natural Simplified Chinese. "
+        "Preserve the meaning and make the result sound natural. "
+        "Respond only in Chinese characters."
+    ),
+}
 
-    return []
+
+def _conversion_messages(transcript, context_language, output_language):
+    prompt = _TRANSLATION_PROMPTS.get((context_language, output_language))
+    if prompt is None:
+        return []
+
+    return [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": transcript},
+    ]
 
 
 def convert_transcript(client, transcript, context_language, output_language):
@@ -199,8 +252,12 @@ def convert_transcript(client, transcript, context_language, output_language):
     if not content:
         raise ValueError("Converted transcript was empty")
 
-    if context_language == "en" and output_language == "hi":
+    if output_language == "hi":
         if not _contains_devanagari(content) or _contains_latin(content):
             raise ValueError("Converted transcript must be Hindi in Devanagari script")
+
+    if output_language == "zh":
+        if not _contains_cjk(content) or _contains_latin(content):
+            raise ValueError("Converted transcript must be in Chinese characters")
 
     return content

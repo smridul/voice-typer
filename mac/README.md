@@ -6,7 +6,14 @@ Speak, stop recording, and the transcript is pasted at the current cursor positi
 
 ## App Bundle Setup
 
-1. Run setup (installs dependencies and stores API key in Keychain):
+1. Create and activate a virtual environment:
+
+```bash
+python3 -m venv ../venv
+source ../venv/bin/activate
+```
+
+2. Run setup (installs dependencies and stores API key in Keychain):
 
 ```bash
 bash setup.sh
@@ -21,13 +28,13 @@ bash setup.sh
 unset GROQ_API_KEY
 ```
 
-2. Build the app bundle:
+3. Build the app bundle:
 
 ```bash
 bash build-app.sh
 ```
 
-3. Install the app bundle to `/Applications`:
+4. Install the app bundle to `/Applications`:
 
 ```bash
 bash install-app.sh
@@ -35,7 +42,7 @@ bash install-app.sh
 
 If `/Applications` requires elevated permissions, re-run with `sudo`.
 
-4. Optional: install launch-at-login agent:
+5. Optional: install launch-at-login agent:
 
 ```bash
 bash install-launch.sh

@@ -94,7 +94,7 @@ public final class KeyboardStore: ObservableObject {
                     }
                 case .requiresModel(let request):
                     let converted = try await textConversionClient.convert(request)
-                    let finalText = try converter.finalizeHindiModelOutput(converted)
+                    let finalText = try converter.finalizeModelOutput(converted, outputLanguage: languageSettings.outputLanguage)
                     phase = .result
                     previewText = finalText
                 }

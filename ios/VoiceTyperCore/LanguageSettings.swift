@@ -3,11 +3,15 @@ import Foundation
 public enum LanguageCode: String, CaseIterable, Codable {
     case english = "en"
     case hindi = "hi"
+    case spanish = "es"
+    case chinese = "zh"
 
     public var label: String {
         switch self {
         case .english: return "English"
         case .hindi: return "Hindi"
+        case .spanish: return "Spanish"
+        case .chinese: return "Chinese"
         }
     }
 }

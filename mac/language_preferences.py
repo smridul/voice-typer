@@ -6,8 +6,8 @@ from pathlib import Path
 
 DEFAULT_CONTEXT_LANGUAGE = "en"
 DEFAULT_OUTPUT_LANGUAGE = "en"
-LANGUAGE_LABELS = {"en": "English", "hi": "Hindi"}
-LANGUAGE_CODES_BY_LABEL = {"English": "en", "Hindi": "hi"}
+LANGUAGE_LABELS = {"en": "English", "hi": "Hindi", "es": "Spanish", "zh": "Chinese"}
+LANGUAGE_CODES_BY_LABEL = {"English": "en", "Hindi": "hi", "Spanish": "es", "Chinese": "zh"}
 
 
 @dataclass(frozen=True)
