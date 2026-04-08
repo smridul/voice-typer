@@ -13,7 +13,13 @@ python3 -m venv ../venv
 source ../venv/bin/activate
 ```
 
-2. Run setup (installs dependencies and stores API key in Keychain):
+2. Install dependencies:
+
+```bash
+python3 -m pip install -r requirements.txt pyinstaller
+```
+
+3. Run setup (installs dependencies and stores API key in Keychain):
 
 ```bash
 bash setup.sh
@@ -28,13 +34,13 @@ bash setup.sh
 unset GROQ_API_KEY
 ```
 
-3. Build the app bundle:
+4. Build the app bundle:
 
 ```bash
 bash build-app.sh
 ```
 
-4. Install the app bundle to `/Applications`:
+5. Install the app bundle to `/Applications`:
 
 ```bash
 bash install-app.sh
@@ -42,7 +48,7 @@ bash install-app.sh
 
 If `/Applications` requires elevated permissions, re-run with `sudo`.
 
-5. Optional: install launch-at-login agent:
+6. Optional: install launch-at-login agent:
 
 ```bash
 bash install-launch.sh
