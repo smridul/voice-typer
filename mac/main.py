@@ -216,7 +216,7 @@ class VoiceTyper(rumps.App):
 
         system_default_item = rumps.MenuItem(
             SYSTEM_DEFAULT_MIC_LABEL,
-            callback=None,
+            callback=self._set_microphone,
         )
         system_default_item.device_name = None
         self._microphone_items[SYSTEM_DEFAULT_MIC_LABEL] = system_default_item
@@ -233,7 +233,7 @@ class VoiceTyper(rumps.App):
                 continue
             if name in self._microphone_items:
                 continue
-            item = rumps.MenuItem(name, callback=None)
+            item = rumps.MenuItem(name, callback=self._set_microphone)
             item.device_name = name
             self._microphone_items[name] = item
             microphone_menu[name] = item
@@ -276,12 +276,14 @@ class VoiceTyper(rumps.App):
             save_settings(self._settings_path, updated_settings)
         except OSError as error:
             self._refresh_language_menu()
+            self._refresh_microphone_menu()
             print(f"❌ Failed to save settings: {error}")
             rumps.notification("VoiceTyper", "Error", str(error))
             return False
 
         self.settings = updated_settings
         self._refresh_language_menu()
+        self._refresh_microphone_menu()
         return True
 
     def _set_context_language(self, sender):
@@ -305,6 +307,18 @@ class VoiceTyper(rumps.App):
             context_language=self.settings.context_language,
             output_language=language_code,
             input_device_name=self.settings.input_device_name,
+        )
+        self._save_and_apply_settings(updated_settings)
+
+    def _set_microphone(self, sender):
+        device_name = getattr(sender, "device_name", None)
+        if device_name == self.settings.input_device_name:
+            return
+
+        updated_settings = AppSettings(
+            context_language=self.settings.context_language,
+            output_language=self.settings.output_language,
+            input_device_name=device_name,
         )
         self._save_and_apply_settings(updated_settings)
 

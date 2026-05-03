@@ -601,6 +601,102 @@ class LanguagePreferencesTests(unittest.TestCase):
             self.assertEqual(app._context_language_items["en"].state, 0)
             self.assertEqual(notifications, [])
 
+    def test_set_microphone_persists_named_device(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            notifications = []
+            settings_path = Path(tmpdir) / "settings.json"
+            main = load_main_module(
+                notifications,
+                migrated_settings_path=settings_path,
+                available_devices=[
+                    {"name": "External Microphone", "max_input_channels": 1},
+                ],
+            )
+            app = main.VoiceTyper()
+
+            app._set_microphone(app._microphone_items["External Microphone"])
+
+            self.assertEqual(app.settings.input_device_name, "External Microphone")
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input_device_name"], "External Microphone")
+            self.assertEqual(app._microphone_items["External Microphone"].state, 1)
+            self.assertEqual(app._microphone_items["System Default"].state, 0)
+
+    def test_set_microphone_system_default_clears_saved_device(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            notifications = []
+            settings_path = Path(tmpdir) / "settings.json"
+            settings_path.write_text(
+                json.dumps({
+                    "context_language": "en",
+                    "output_language": "en",
+                    "input_device_name": "External Microphone",
+                }),
+                encoding="utf-8",
+            )
+            main = load_main_module(
+                notifications,
+                migrated_settings_path=settings_path,
+                available_devices=[
+                    {"name": "External Microphone", "max_input_channels": 1},
+                ],
+            )
+            app = main.VoiceTyper()
+
+            app._set_microphone(app._microphone_items["System Default"])
+
+            self.assertIsNone(app.settings.input_device_name)
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            self.assertIsNone(payload["input_device_name"])
+            self.assertEqual(app._microphone_items["System Default"].state, 1)
+            self.assertEqual(app._microphone_items["External Microphone"].state, 0)
+
+    def test_set_microphone_no_op_when_already_selected(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            notifications = []
+            settings_path = Path(tmpdir) / "settings.json"
+            main = load_main_module(
+                notifications,
+                migrated_settings_path=settings_path,
+                available_devices=[
+                    {"name": "External Microphone", "max_input_channels": 1},
+                ],
+            )
+            app = main.VoiceTyper()
+
+            app._set_microphone(app._microphone_items["System Default"])
+
+            self.assertFalse(settings_path.exists())
+            self.assertEqual(app._microphone_items["System Default"].state, 1)
+
+    def test_set_microphone_keeps_state_consistent_when_save_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            notifications = []
+            settings_path = Path(tmpdir) / "settings.json"
+            main = load_main_module(
+                notifications,
+                migrated_settings_path=settings_path,
+                available_devices=[
+                    {"name": "External Microphone", "max_input_channels": 1},
+                ],
+            )
+            app = main.VoiceTyper()
+            original_settings = app.settings
+            main.save_settings = lambda path, settings: (_ for _ in ()).throw(
+                OSError("disk full")
+            )
+
+            app._set_microphone(app._microphone_items["External Microphone"])
+
+            self.assertEqual(app.settings, original_settings)
+            self.assertEqual(app._microphone_items["System Default"].state, 1)
+            self.assertEqual(app._microphone_items["External Microphone"].state, 0)
+            self.assertFalse(settings_path.exists())
+            self.assertEqual(len(notifications), 1)
+            self.assertEqual(notifications[0][0], "VoiceTyper")
+            self.assertEqual(notifications[0][1], "Error")
+            self.assertIn("disk full", notifications[0][2])
+
     def test_set_context_language_preserves_input_device_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             notifications = []
