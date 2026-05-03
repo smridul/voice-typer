@@ -249,6 +249,7 @@ class VoiceTyper(rumps.App):
         updated_settings = AppSettings(
             context_language=language_code,
             output_language=self.settings.output_language,
+            input_device_name=self.settings.input_device_name,
         )
         self._save_and_apply_settings(updated_settings)
 
@@ -260,6 +261,7 @@ class VoiceTyper(rumps.App):
         updated_settings = AppSettings(
             context_language=self.settings.context_language,
             output_language=language_code,
+            input_device_name=self.settings.input_device_name,
         )
         self._save_and_apply_settings(updated_settings)
 

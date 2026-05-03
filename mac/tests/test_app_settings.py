@@ -485,6 +485,48 @@ class LanguagePreferencesTests(unittest.TestCase):
             self.assertEqual(app._context_language_items["en"].state, 0)
             self.assertEqual(notifications, [])
 
+    def test_set_context_language_preserves_input_device_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            notifications = []
+            settings_path = Path(tmpdir) / "settings.json"
+            main = load_main_module(
+                notifications,
+                migrated_settings_path=settings_path,
+            )
+            app = main.VoiceTyper()
+            app.settings = AppSettings(
+                context_language="en",
+                output_language="en",
+                input_device_name="External Microphone",
+            )
+
+            app._set_context_language(app._context_language_items["hi"])
+
+            self.assertEqual(app.settings.input_device_name, "External Microphone")
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input_device_name"], "External Microphone")
+
+    def test_set_output_language_preserves_input_device_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            notifications = []
+            settings_path = Path(tmpdir) / "settings.json"
+            main = load_main_module(
+                notifications,
+                migrated_settings_path=settings_path,
+            )
+            app = main.VoiceTyper()
+            app.settings = AppSettings(
+                context_language="en",
+                output_language="en",
+                input_device_name="External Microphone",
+            )
+
+            app._set_output_language(app._output_language_items["hi"])
+
+            self.assertEqual(app.settings.input_device_name, "External Microphone")
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input_device_name"], "External Microphone")
+
     def test_language_callbacks_keep_state_consistent_when_save_fails(self):
         for setter_name, items_attr in (
             ("_set_context_language", "_context_language_items"),
