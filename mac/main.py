@@ -261,6 +261,14 @@ class VoiceTyper(rumps.App):
         self._refresh_microphone_menu()
 
     def _refresh_microphone_devices(self, _sender):
+        # PortAudio caches the device list at init time, so devices paired
+        # after app launch (e.g. AirPods) won't appear without re-init.
+        try:
+            sd._terminate()
+            sd._initialize()
+        except Exception as error:
+            print(f"⚠️ PortAudio re-init failed: {error}")
+
         self._populate_microphone_devices()
         if self._microphone_menu is not None:
             refresh_item = rumps.MenuItem(

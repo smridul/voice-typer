@@ -141,6 +141,8 @@ def load_main_module(
     fake_sounddevice.InputStream = input_stream_factory
     fake_sounddevice.default = types.SimpleNamespace(device=list(default_devices))
     fake_sounddevice.query_devices = lambda: available_devices
+    fake_sounddevice._terminate = lambda: None
+    fake_sounddevice._initialize = lambda: None
 
     fake_numpy = types.ModuleType("numpy")
     fake_numpy.concatenate = lambda frames, axis=0: FakeAudioArray()
