@@ -43,6 +43,7 @@ CHANNELS    = 1
 HOTKEY      = "<ctrl>+<space>"   # Change this if you prefer a different combo
 MIC_PERMISSION_HELPER = "VoiceTyperMicPermission"
 GROQ_REQUEST_TIMEOUT_SECONDS = 30.0
+SYSTEM_DEFAULT_MIC_LABEL = "System Default"
 
 
 def has_hotkey_permission():
@@ -172,14 +173,18 @@ class VoiceTyper(rumps.App):
             "Set API Key…",
             callback=self._set_api_key,
         )
+        self._microphone_items = {}
         self._context_language_items = {}
         self._output_language_items = {}
         self.menu = [
             self._status_item,
             self._set_api_key_item,
             None,
+            self._build_microphone_menu(),
+            None,
             *self._build_language_menu(),
         ]
+        self._refresh_microphone_menu()
         self._refresh_language_menu()
 
         self.client    = None
@@ -204,6 +209,44 @@ class VoiceTyper(rumps.App):
             print("❌ VoiceTyper hotkey listener not started: waiting for Accessibility/Input Monitoring permission.")
 
         print(f"✅ VoiceTyper running. Hold {HOTKEY} to record.")
+
+    def _build_microphone_menu(self):
+        microphone_menu = rumps.MenuItem("Microphone")
+        self._microphone_items = {}
+
+        system_default_item = rumps.MenuItem(
+            SYSTEM_DEFAULT_MIC_LABEL,
+            callback=None,
+        )
+        system_default_item.device_name = None
+        self._microphone_items[SYSTEM_DEFAULT_MIC_LABEL] = system_default_item
+        microphone_menu[SYSTEM_DEFAULT_MIC_LABEL] = system_default_item
+
+        for device in sd.query_devices():
+            if hasattr(device, "get"):
+                name = device.get("name", "")
+                max_input_channels = device.get("max_input_channels", 0)
+            else:
+                name = getattr(device, "name", "")
+                max_input_channels = getattr(device, "max_input_channels", 0)
+            if not name or max_input_channels <= 0:
+                continue
+            if name in self._microphone_items:
+                continue
+            item = rumps.MenuItem(name, callback=None)
+            item.device_name = name
+            self._microphone_items[name] = item
+            microphone_menu[name] = item
+
+        return microphone_menu
+
+    def _refresh_microphone_menu(self):
+        selected = self.settings.input_device_name
+        for label, item in self._microphone_items.items():
+            if selected is None:
+                item.state = int(label == SYSTEM_DEFAULT_MIC_LABEL)
+            else:
+                item.state = int(label == selected)
 
     def _build_language_menu(self):
         context_menu = rumps.MenuItem("Context Language")

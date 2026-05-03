@@ -309,6 +309,51 @@ class LanguagePreferencesTests(unittest.TestCase):
         self.assertTrue(app.recording)
         self.assertNotIn("device", stream_calls[0])
 
+    def test_microphone_menu_lists_system_default_and_input_devices(self):
+        notifications = []
+        main = load_main_module(
+            notifications,
+            available_devices=[
+                {"name": "Fake Mic", "max_input_channels": 1},
+                {"name": "Fake Speakers", "max_input_channels": 0},
+                {"name": "External Microphone", "max_input_channels": 1},
+            ],
+        )
+        app = main.VoiceTyper()
+
+        self.assertIn("System Default", app._microphone_items)
+        self.assertIn("Fake Mic", app._microphone_items)
+        self.assertIn("External Microphone", app._microphone_items)
+        self.assertNotIn("Fake Speakers", app._microphone_items)
+        self.assertEqual(app._microphone_items["System Default"].state, 1)
+        self.assertEqual(app._microphone_items["Fake Mic"].state, 0)
+        self.assertEqual(app._microphone_items["External Microphone"].state, 0)
+
+    def test_microphone_menu_marks_saved_device_as_selected(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            notifications = []
+            settings_path = Path(tmpdir) / "settings.json"
+            settings_path.write_text(
+                json.dumps({
+                    "context_language": "en",
+                    "output_language": "en",
+                    "input_device_name": "External Microphone",
+                }),
+                encoding="utf-8",
+            )
+            main = load_main_module(
+                notifications,
+                migrated_settings_path=settings_path,
+                available_devices=[
+                    {"name": "Fake Mic", "max_input_channels": 1},
+                    {"name": "External Microphone", "max_input_channels": 1},
+                ],
+            )
+            app = main.VoiceTyper()
+
+        self.assertEqual(app._microphone_items["System Default"].state, 0)
+        self.assertEqual(app._microphone_items["External Microphone"].state, 1)
+
     def test_start_recording_resets_status_when_stream_creation_fails(self):
         notifications = []
         main = load_main_module(
