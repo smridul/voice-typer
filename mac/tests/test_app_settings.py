@@ -217,7 +217,7 @@ def load_main_module(
 
 
 class LanguagePreferencesTests(unittest.TestCase):
-    def test_start_recording_uses_first_input_device_when_default_missing(self):
+    def test_start_recording_omits_device_when_no_input_device_name_saved(self):
         notifications = []
         stream_calls = []
         main = load_main_module(
@@ -236,7 +236,78 @@ class LanguagePreferencesTests(unittest.TestCase):
         self.assertTrue(app.recording)
         self.assertEqual(app.title, "🔴")
         self.assertEqual(app._status_item.title, "Status: Recording…")
-        self.assertEqual(stream_calls[0]["device"], 1)
+        self.assertNotIn("device", stream_calls[0])
+
+    def test_start_recording_uses_named_device_when_saved(self):
+        notifications = []
+        stream_calls = []
+        main = load_main_module(
+            notifications,
+            default_devices=(-1, -1),
+            available_devices=[
+                {"name": "Fake Speakers", "max_input_channels": 0},
+                {"name": "Fake Mic", "max_input_channels": 1},
+                {"name": "External Microphone", "max_input_channels": 1},
+            ],
+            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(),
+        )
+        app = main.VoiceTyper()
+        app.settings = AppSettings(
+            context_language="en",
+            output_language="en",
+            input_device_name="External Microphone",
+        )
+
+        app._start_recording()
+
+        self.assertTrue(app.recording)
+        self.assertEqual(stream_calls[0]["device"], 2)
+
+    def test_start_recording_falls_back_when_named_device_missing(self):
+        notifications = []
+        stream_calls = []
+        main = load_main_module(
+            notifications,
+            default_devices=(-1, -1),
+            available_devices=[
+                {"name": "Fake Mic", "max_input_channels": 1},
+            ],
+            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(),
+        )
+        app = main.VoiceTyper()
+        app.settings = AppSettings(
+            context_language="en",
+            output_language="en",
+            input_device_name="No Such Device",
+        )
+
+        app._start_recording()
+
+        self.assertTrue(app.recording)
+        self.assertNotIn("device", stream_calls[0])
+
+    def test_start_recording_falls_back_when_named_device_has_no_input(self):
+        notifications = []
+        stream_calls = []
+        main = load_main_module(
+            notifications,
+            default_devices=(-1, -1),
+            available_devices=[
+                {"name": "External Microphone", "max_input_channels": 0},
+            ],
+            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(),
+        )
+        app = main.VoiceTyper()
+        app.settings = AppSettings(
+            context_language="en",
+            output_language="en",
+            input_device_name="External Microphone",
+        )
+
+        app._start_recording()
+
+        self.assertTrue(app.recording)
+        self.assertNotIn("device", stream_calls[0])
 
     def test_start_recording_resets_status_when_stream_creation_fails(self):
         notifications = []

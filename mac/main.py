@@ -371,23 +371,24 @@ class VoiceTyper(rumps.App):
         return True
 
     def _resolve_input_device(self):
-        default_device = getattr(getattr(sd, "default", None), "device", None)
-        if isinstance(default_device, (list, tuple)) and default_device:
-            input_device = default_device[0]
-            if isinstance(input_device, int) and input_device >= 0:
-                return input_device
-        elif isinstance(default_device, int) and default_device >= 0:
-            return default_device
+        device_name = self.settings.input_device_name
+        if not device_name:
+            return None
 
         for index, device in enumerate(sd.query_devices()):
-            max_input_channels = 0
             if hasattr(device, "get"):
+                name = device.get("name", "")
                 max_input_channels = device.get("max_input_channels", 0)
             else:
+                name = getattr(device, "name", "")
                 max_input_channels = getattr(device, "max_input_channels", 0)
-            if max_input_channels > 0:
+            if name == device_name and max_input_channels > 0:
                 return index
 
+        print(
+            f"⚠️ Saved input device '{device_name}' not available; "
+            "falling back to system default."
+        )
         return None
 
     # ── Recording ─────────────────────────────────────────────────────────────
