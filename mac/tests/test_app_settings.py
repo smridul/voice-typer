@@ -332,8 +332,84 @@ class LanguagePreferencesTests(unittest.TestCase):
 
         self.assertEqual(
             payload,
-            {"context_language": "en", "output_language": "hi"},
+            {
+                "context_language": "en",
+                "output_language": "hi",
+                "input_device_name": None,
+            },
         )
+
+    def test_load_settings_returns_none_input_device_when_field_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            settings_path.write_text(
+                json.dumps({"context_language": "en", "output_language": "en"}),
+                encoding="utf-8",
+            )
+
+            settings = load_settings(settings_path)
+
+        self.assertIsNone(settings.input_device_name)
+
+    def test_load_settings_preserves_input_device_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            settings_path.write_text(
+                json.dumps({
+                    "context_language": "en",
+                    "output_language": "en",
+                    "input_device_name": "External Microphone",
+                }),
+                encoding="utf-8",
+            )
+
+            settings = load_settings(settings_path)
+
+        self.assertEqual(settings.input_device_name, "External Microphone")
+
+    def test_load_settings_returns_none_for_non_string_input_device(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            settings_path.write_text(
+                json.dumps({
+                    "context_language": "en",
+                    "output_language": "en",
+                    "input_device_name": 42,
+                }),
+                encoding="utf-8",
+            )
+
+            settings = load_settings(settings_path)
+
+        self.assertIsNone(settings.input_device_name)
+
+    def test_save_settings_round_trips_input_device_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            expected = AppSettings(
+                context_language="en",
+                output_language="en",
+                input_device_name="External Microphone",
+            )
+
+            save_settings(settings_path, expected)
+            actual = load_settings(settings_path)
+
+        self.assertEqual(actual, expected)
+
+    def test_save_settings_writes_null_input_device_when_none(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            settings = AppSettings(
+                context_language="en",
+                output_language="en",
+                input_device_name=None,
+            )
+
+            save_settings(settings_path, settings)
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+
+        self.assertIsNone(payload["input_device_name"])
 
     def test_save_settings_preserves_existing_file_when_write_is_interrupted(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -399,7 +475,11 @@ class LanguagePreferencesTests(unittest.TestCase):
             )
             self.assertEqual(
                 json.loads(settings_path.read_text(encoding="utf-8")),
-                {"context_language": "hi", "output_language": "en"},
+                {
+                    "context_language": "hi",
+                    "output_language": "en",
+                    "input_device_name": None,
+                },
             )
             self.assertEqual(app._context_language_items["hi"].state, 1)
             self.assertEqual(app._context_language_items["en"].state, 0)

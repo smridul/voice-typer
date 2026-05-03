@@ -3,6 +3,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 DEFAULT_CONTEXT_LANGUAGE = "en"
 DEFAULT_OUTPUT_LANGUAGE = "en"
@@ -14,6 +15,7 @@ LANGUAGE_CODES_BY_LABEL = {"English": "en", "Hindi": "hi", "Spanish": "es", "Chi
 class AppSettings:
     context_language: str
     output_language: str
+    input_device_name: Optional[str] = None
 
 
 def _sanitize_language(code, fallback):
@@ -24,6 +26,7 @@ def _default_settings():
     return AppSettings(
         context_language=DEFAULT_CONTEXT_LANGUAGE,
         output_language=DEFAULT_OUTPUT_LANGUAGE,
+        input_device_name=None,
     )
 
 
@@ -36,6 +39,9 @@ def load_settings(path):
     if not isinstance(payload, dict):
         return _default_settings()
 
+    raw_device = payload.get("input_device_name")
+    input_device_name = raw_device if isinstance(raw_device, str) else None
+
     return AppSettings(
         context_language=_sanitize_language(
             payload.get("context_language"),
@@ -45,6 +51,7 @@ def load_settings(path):
             payload.get("output_language"),
             DEFAULT_OUTPUT_LANGUAGE,
         ),
+        input_device_name=input_device_name,
     )
 
 
@@ -52,6 +59,7 @@ def save_settings(path, settings):
     payload = {
         "context_language": settings.context_language,
         "output_language": settings.output_language,
+        "input_device_name": settings.input_device_name,
     }
     settings_path = Path(path)
     temp_path = None
