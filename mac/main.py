@@ -230,7 +230,8 @@ class VoiceTyper(rumps.App):
         if microphone_menu is None:
             return
 
-        microphone_menu.clear()
+        if self._microphone_items:
+            microphone_menu.clear()
         self._microphone_items = {}
 
         system_default_item = rumps.MenuItem(
