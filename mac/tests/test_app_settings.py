@@ -7,11 +7,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import language_preferences
-from language_preferences import (
+import app_settings
+from app_settings import (
     DEFAULT_CONTEXT_LANGUAGE,
     DEFAULT_OUTPUT_LANGUAGE,
-    LanguageSettings,
+    AppSettings,
     load_settings,
     save_settings,
 )
@@ -286,7 +286,7 @@ class LanguagePreferencesTests(unittest.TestCase):
 
         self.assertEqual(
             settings,
-            LanguageSettings(
+            AppSettings(
                 context_language=DEFAULT_CONTEXT_LANGUAGE,
                 output_language=DEFAULT_OUTPUT_LANGUAGE,
             ),
@@ -295,7 +295,7 @@ class LanguagePreferencesTests(unittest.TestCase):
     def test_save_settings_round_trips_values(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             settings_path = Path(tmpdir) / "settings.json"
-            expected = LanguageSettings(context_language="hi", output_language="en")
+            expected = AppSettings(context_language="hi", output_language="en")
 
             save_settings(settings_path, expected)
             actual = load_settings(settings_path)
@@ -325,7 +325,7 @@ class LanguagePreferencesTests(unittest.TestCase):
     def test_save_settings_writes_expected_payload(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             settings_path = Path(tmpdir) / "settings.json"
-            settings = LanguageSettings(context_language="en", output_language="hi")
+            settings = AppSettings(context_language="en", output_language="hi")
 
             save_settings(settings_path, settings)
             payload = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -338,8 +338,8 @@ class LanguagePreferencesTests(unittest.TestCase):
     def test_save_settings_preserves_existing_file_when_write_is_interrupted(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             settings_path = Path(tmpdir) / "settings.json"
-            original = LanguageSettings(context_language="hi", output_language="en")
-            updated = LanguageSettings(context_language="en", output_language="hi")
+            original = AppSettings(context_language="hi", output_language="en")
+            updated = AppSettings(context_language="en", output_language="hi")
             save_settings(settings_path, original)
 
             interrupted_temp_path = Path(tmpdir) / "settings-interrupted.tmp"
@@ -362,7 +362,7 @@ class LanguagePreferencesTests(unittest.TestCase):
                     raise OSError("disk full")
 
             with patch.object(
-                language_preferences.tempfile,
+                app_settings.tempfile,
                 "NamedTemporaryFile",
                 InterruptedTempFile,
             ):
@@ -376,7 +376,7 @@ class LanguagePreferencesTests(unittest.TestCase):
             )
 
     def test_supported_language_labels_are_stable(self):
-        from language_preferences import LANGUAGE_LABELS
+        from app_settings import LANGUAGE_LABELS
 
         self.assertEqual(LANGUAGE_LABELS.get("en"), "English")
         self.assertEqual(LANGUAGE_LABELS.get("hi"), "Hindi")
@@ -395,7 +395,7 @@ class LanguagePreferencesTests(unittest.TestCase):
 
             self.assertEqual(
                 app.settings,
-                LanguageSettings(context_language="hi", output_language="en"),
+                AppSettings(context_language="hi", output_language="en"),
             )
             self.assertEqual(
                 json.loads(settings_path.read_text(encoding="utf-8")),
@@ -446,7 +446,7 @@ class LanguagePreferencesTests(unittest.TestCase):
                 migrated_settings_path=settings_path,
             )
             app = main.VoiceTyper()
-            app.settings = LanguageSettings(context_language="hi", output_language="en")
+            app.settings = AppSettings(context_language="hi", output_language="en")
             app.frames = [object()]
 
             transcription_calls = []
@@ -455,7 +455,7 @@ class LanguagePreferencesTests(unittest.TestCase):
 
             def create_transcription(**kwargs):
                 transcription_calls.append(kwargs)
-                app.settings = LanguageSettings(
+                app.settings = AppSettings(
                     context_language="en",
                     output_language="hi",
                 )

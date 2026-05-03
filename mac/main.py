@@ -28,9 +28,9 @@ import numpy as np
 import pyperclip
 from pynput import keyboard
 from groq import AuthenticationError, Groq
-from language_preferences import (
+from app_settings import (
     LANGUAGE_LABELS,
-    LanguageSettings,
+    AppSettings,
     load_settings,
     save_settings,
 )
@@ -246,7 +246,7 @@ class VoiceTyper(rumps.App):
         if language_code == self.settings.context_language:
             return
 
-        updated_settings = LanguageSettings(
+        updated_settings = AppSettings(
             context_language=language_code,
             output_language=self.settings.output_language,
         )
@@ -257,7 +257,7 @@ class VoiceTyper(rumps.App):
         if language_code == self.settings.output_language:
             return
 
-        updated_settings = LanguageSettings(
+        updated_settings = AppSettings(
             context_language=self.settings.context_language,
             output_language=language_code,
         )

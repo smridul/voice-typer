@@ -11,7 +11,7 @@ LANGUAGE_CODES_BY_LABEL = {"English": "en", "Hindi": "hi", "Spanish": "es", "Chi
 
 
 @dataclass(frozen=True)
-class LanguageSettings:
+class AppSettings:
     context_language: str
     output_language: str
 
@@ -21,7 +21,7 @@ def _sanitize_language(code, fallback):
 
 
 def _default_settings():
-    return LanguageSettings(
+    return AppSettings(
         context_language=DEFAULT_CONTEXT_LANGUAGE,
         output_language=DEFAULT_OUTPUT_LANGUAGE,
     )
@@ -36,7 +36,7 @@ def load_settings(path):
     if not isinstance(payload, dict):
         return _default_settings()
 
-    return LanguageSettings(
+    return AppSettings(
         context_language=_sanitize_language(
             payload.get("context_language"),
             DEFAULT_CONTEXT_LANGUAGE,
