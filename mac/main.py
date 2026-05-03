@@ -44,6 +44,7 @@ HOTKEY      = "<ctrl>+<space>"   # Change this if you prefer a different combo
 MIC_PERMISSION_HELPER = "VoiceTyperMicPermission"
 GROQ_REQUEST_TIMEOUT_SECONDS = 30.0
 SYSTEM_DEFAULT_MIC_LABEL = "System Default"
+REFRESH_MIC_DEVICES_LABEL = "Refresh devices"
 
 
 def has_hotkey_permission():
@@ -173,6 +174,7 @@ class VoiceTyper(rumps.App):
             "Set API Key…",
             callback=self._set_api_key,
         )
+        self._microphone_menu = None
         self._microphone_items = {}
         self._context_language_items = {}
         self._output_language_items = {}
@@ -212,6 +214,23 @@ class VoiceTyper(rumps.App):
 
     def _build_microphone_menu(self):
         microphone_menu = rumps.MenuItem("Microphone")
+        self._microphone_menu = microphone_menu
+        self._populate_microphone_devices()
+
+        refresh_item = rumps.MenuItem(
+            REFRESH_MIC_DEVICES_LABEL,
+            callback=self._refresh_microphone_devices,
+        )
+        microphone_menu[REFRESH_MIC_DEVICES_LABEL] = refresh_item
+
+        return microphone_menu
+
+    def _populate_microphone_devices(self):
+        microphone_menu = self._microphone_menu
+        if microphone_menu is None:
+            return
+
+        microphone_menu.clear()
         self._microphone_items = {}
 
         system_default_item = rumps.MenuItem(
@@ -238,7 +257,16 @@ class VoiceTyper(rumps.App):
             self._microphone_items[name] = item
             microphone_menu[name] = item
 
-        return microphone_menu
+        self._refresh_microphone_menu()
+
+    def _refresh_microphone_devices(self, _sender):
+        self._populate_microphone_devices()
+        if self._microphone_menu is not None:
+            refresh_item = rumps.MenuItem(
+                REFRESH_MIC_DEVICES_LABEL,
+                callback=self._refresh_microphone_devices,
+            )
+            self._microphone_menu[REFRESH_MIC_DEVICES_LABEL] = refresh_item
 
     def _refresh_microphone_menu(self):
         selected = self.settings.input_device_name

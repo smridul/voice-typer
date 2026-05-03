@@ -35,6 +35,12 @@ class FakeMenuItem:
     def __setitem__(self, key, value):
         self.children[str(key)] = value
 
+    def __contains__(self, key):
+        return str(key) in self.children
+
+    def clear(self):
+        self.children.clear()
+
 
 class FakeApp:
     def __init__(
@@ -308,6 +314,45 @@ class LanguagePreferencesTests(unittest.TestCase):
 
         self.assertTrue(app.recording)
         self.assertNotIn("device", stream_calls[0])
+
+    def test_refresh_devices_updates_microphone_menu_in_place(self):
+        notifications = []
+        device_list = [
+            {"name": "Fake Mic", "max_input_channels": 1},
+        ]
+        main = load_main_module(
+            notifications,
+            available_devices=device_list,
+        )
+        app = main.VoiceTyper()
+        self.assertIn("Fake Mic", app._microphone_items)
+        self.assertNotIn("New Headset", app._microphone_items)
+
+        device_list.append({"name": "New Headset", "max_input_channels": 1})
+        app._refresh_microphone_devices(app._microphone_items["System Default"])
+
+        self.assertIn("New Headset", app._microphone_items)
+        self.assertIn("Fake Mic", app._microphone_items)
+        self.assertIn("System Default", app._microphone_items)
+
+    def test_refresh_devices_drops_unplugged_devices(self):
+        notifications = []
+        device_list = [
+            {"name": "Fake Mic", "max_input_channels": 1},
+            {"name": "Removable Headset", "max_input_channels": 1},
+        ]
+        main = load_main_module(
+            notifications,
+            available_devices=device_list,
+        )
+        app = main.VoiceTyper()
+        self.assertIn("Removable Headset", app._microphone_items)
+
+        device_list.pop()
+        app._refresh_microphone_devices(app._microphone_items["System Default"])
+
+        self.assertNotIn("Removable Headset", app._microphone_items)
+        self.assertIn("Fake Mic", app._microphone_items)
 
     def test_microphone_menu_lists_system_default_and_input_devices(self):
         notifications = []
