@@ -37,6 +37,7 @@ targets:
       path: VoiceTyper/Info.plist
       properties:
         LSRequiresIPhoneOS: true
+        ITSAppUsesNonExemptEncryption: false
         GROQ_API_KEY: $(GROQ_API_KEY)
         NSMicrophoneUsageDescription: VoiceTyper needs microphone access so you can dictate text.
         UIApplicationSceneManifest: {}
