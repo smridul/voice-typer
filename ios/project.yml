@@ -52,6 +52,9 @@ targets:
         sign: false
       - target: VoiceTyperCore
         embed: true
+    scheme:
+      testTargets:
+        - VoiceTyperTests
 
   VoiceTyperKeyboard:
     type: app-extension
