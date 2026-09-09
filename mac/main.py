@@ -196,12 +196,16 @@ class VoiceTyper(rumps.App):
         self._stream   = None
         self._hotkey_listener = None
         self._hotkey_enabled = False
+        self._hotkey_permission_granted = False
         self._hotkey_permission_timer = rumps.Timer(self._refresh_hotkey_permission, 2)
         self._refresh_client_state(notify=False)
 
-        if not self._refresh_hotkey_permission():
+        self._refresh_hotkey_permission()
+        # Keep supervising the listener for the entire app lifetime. The menu
+        # bar can remain alive even after pynput's background thread crashes.
+        self._hotkey_permission_timer.start()
+        if not self._hotkey_permission_granted:
             prompt_for_hotkey_permission()
-            self._hotkey_permission_timer.start()
             self._status_item.title = "Status: Hotkey permission required"
             rumps.notification(
                 "VoiceTyper",
@@ -210,7 +214,7 @@ class VoiceTyper(rumps.App):
             )
             print("❌ VoiceTyper hotkey listener not started: waiting for Accessibility/Input Monitoring permission.")
 
-        print(f"✅ VoiceTyper running. Hold {HOTKEY} to record.")
+        print(f"✅ VoiceTyper running. Press {HOTKEY} to toggle recording.", flush=True)
 
     def _build_microphone_menu(self):
         microphone_menu = rumps.MenuItem("Microphone")
@@ -365,8 +369,8 @@ class VoiceTyper(rumps.App):
         if not self._hotkey_enabled:
             rumps.notification(
                 "VoiceTyper",
-                "Permissions Required",
-                "Grant Accessibility and Input Monitoring to VoiceTyper.app, then restart it.",
+                "Hotkey Unavailable",
+                "VoiceTyper is reconnecting the shortcut. Check Accessibility and Input Monitoring permissions if it does not recover.",
             )
             return
 
@@ -439,30 +443,39 @@ class VoiceTyper(rumps.App):
         if self._hotkey_listener is not None:
             return
 
-        self._hotkey_listener = keyboard.GlobalHotKeys({
+        listener = keyboard.GlobalHotKeys({
             HOTKEY: self._on_hotkey
         })
-        self._hotkey_listener.daemon = True
-        self._hotkey_listener.start()
-        print("✅ VoiceTyper hotkey listener started.")
+        listener.daemon = True
+        listener.start()
+        self._hotkey_listener = listener
+        print("✅ VoiceTyper hotkey listener started.", flush=True)
 
     def _refresh_hotkey_permission(self, _sender=None):
-        if self._hotkey_listener is not None:
-            self._hotkey_enabled = True
-            if self._hotkey_permission_timer is not None:
-                self._hotkey_permission_timer.stop()
-            return True
+        self._hotkey_permission_granted = has_hotkey_permission()
+        listener = self._hotkey_listener
+        if listener is not None and not listener.is_alive():
+            print("⚠️ VoiceTyper hotkey listener exited; reconnecting.", flush=True)
+            self._hotkey_listener = None
 
-        self._hotkey_enabled = has_hotkey_permission()
-        if not self._hotkey_enabled:
-            self._status_item.title = self._idle_status_title()
-            return False
+        if not self._hotkey_permission_granted:
+            if self._hotkey_listener is not None:
+                self._hotkey_listener.stop()
+            self._hotkey_enabled = False
+        else:
+            try:
+                self._start_hotkey_listener()
+            except Exception as error:
+                print(f"⚠️ Unable to start hotkey listener; will retry: {error}", flush=True)
+            listener = self._hotkey_listener
+            self._hotkey_enabled = bool(
+                listener is not None and listener.is_alive() and listener.running
+            )
 
-        self._start_hotkey_listener()
-        self._reset_status()
-        if self._hotkey_permission_timer is not None:
-            self._hotkey_permission_timer.stop()
-        return True
+        # A health check must not replace the recording/transcription display.
+        if not self.recording and self._status_item.title != "Status: Transcribing…":
+            self._reset_status()
+        return self._hotkey_enabled
 
     def _resolve_input_device(self):
         device_name = self.settings.input_device_name
@@ -642,7 +655,9 @@ class VoiceTyper(rumps.App):
     # ── Helpers ───────────────────────────────────────────────────────────────
     def _idle_status_title(self):
         if not self._hotkey_enabled:
-            return "Status: Hotkey permission required"
+            if not self._hotkey_permission_granted:
+                return "Status: Hotkey permission required"
+            return "Status: Hotkey reconnecting…"
         if self._api_key_invalid:
             return "Status: API key invalid"
         if self.client is None:

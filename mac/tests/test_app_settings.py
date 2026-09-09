@@ -74,9 +74,17 @@ class FakeHotKeys:
         self.mapping = mapping
         self.daemon = False
         self.started = False
+        self.running = False
 
     def start(self):
         self.started = True
+        self.running = True
+
+    def is_alive(self):
+        return self.running
+
+    def stop(self):
+        self.running = False
 
 
 class FakeTimer:
@@ -1114,8 +1122,81 @@ class LanguagePreferencesTests(unittest.TestCase):
         self.assertTrue(app._hotkey_enabled)
         self.assertIsNotNone(app._hotkey_listener)
         self.assertTrue(app._hotkey_listener.started)
-        self.assertTrue(app._hotkey_permission_timer.stopped)
+        self.assertTrue(app._hotkey_permission_timer.started)
+        self.assertFalse(app._hotkey_permission_timer.stopped)
         self.assertEqual(app._status_item.title, "Status: Ready")
+
+    def test_hotkey_health_timer_runs_even_with_permission_at_startup(self):
+        app = load_main_module([]).VoiceTyper()
+        self.assertTrue(app._hotkey_permission_timer.started)
+        self.assertFalse(app._hotkey_permission_timer.stopped)
+
+    def test_dead_hotkey_listener_is_replaced_and_shortcut_works(self):
+        app = load_main_module([]).VoiceTyper()
+        dead_listener = app._hotkey_listener
+        dead_listener.running = False
+
+        app._refresh_hotkey_permission()
+
+        self.assertIsNot(app._hotkey_listener, dead_listener)
+        self.assertTrue(app._hotkey_listener.is_alive())
+        self.assertTrue(app._hotkey_enabled)
+        with patch.object(app, "_start_recording") as start_recording:
+            with patch("threading.Thread") as thread:
+                app._hotkey_listener.mapping["<ctrl>+<space>"]()
+            self.assertEqual(thread.call_args.kwargs["target"], start_recording)
+
+    def test_healthy_listener_is_retained_without_resetting_busy_status(self):
+        app = load_main_module([]).VoiceTyper()
+        listener = app._hotkey_listener
+        for title, status, recording in (
+            ("🔴", "Status: Recording…", True),
+            ("⏳", "Status: Transcribing…", False),
+        ):
+            app.title = title
+            app._status_item.title = status
+            app.recording = recording
+            app._refresh_hotkey_permission()
+            self.assertIs(app._hotkey_listener, listener)
+            self.assertEqual(app.title, title)
+            self.assertEqual(app._status_item.title, status)
+
+    def test_permission_revocation_stops_listener_and_restoration_recovers(self):
+        main = load_main_module([])
+        app = main.VoiceTyper()
+        listener = app._hotkey_listener
+        main.has_hotkey_permission = lambda: False
+        self.assertFalse(app._refresh_hotkey_permission())
+        self.assertFalse(listener.running)
+        self.assertFalse(app._hotkey_enabled)
+        self.assertEqual(app._status_item.title, "Status: Hotkey permission required")
+
+        main.has_hotkey_permission = lambda: True
+        self.assertTrue(app._refresh_hotkey_permission())
+        self.assertIsNot(app._hotkey_listener, listener)
+        self.assertEqual(app._status_item.title, "Status: Ready")
+
+    def test_listener_start_failure_reports_unavailable_and_retries(self):
+        main = load_main_module([])
+        with patch.object(FakeHotKeys, "start", side_effect=RuntimeError("tap failed")):
+            app = main.VoiceTyper()
+        self.assertFalse(app._hotkey_enabled)
+        self.assertEqual(app._status_item.title, "Status: Hotkey reconnecting…")
+        self.assertTrue(app._hotkey_permission_timer.started)
+
+        self.assertTrue(app._refresh_hotkey_permission())
+        self.assertTrue(app._hotkey_listener.running)
+        self.assertEqual(app._status_item.title, "Status: Ready")
+
+    def test_stopping_listener_is_not_replaced_until_thread_exits(self):
+        app = load_main_module([]).VoiceTyper()
+        listener = app._hotkey_listener
+        listener.running = False
+        listener.is_alive = lambda: True
+        self.assertFalse(app._refresh_hotkey_permission())
+        self.assertIs(app._hotkey_listener, listener)
+        self.assertFalse(app._hotkey_enabled)
+        self.assertEqual(app._status_item.title, "Status: Hotkey reconnecting…")
 
 
 if __name__ == "__main__":

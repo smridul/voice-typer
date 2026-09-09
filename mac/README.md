@@ -118,3 +118,26 @@ If transcription fails silently after recording, the most common causes are:
 ```bash
 tail -f ~/Library/Logs/VoiceTyper.log
 ```
+
+If Control–Space stops responding while the menu bar app remains open, check
+this log before restarting. `pynput` 1.8.1 had a macOS media-key bug: pressing
+volume or play/pause could terminate the keyboard listener with
+`GlobalHotKeys._on_press() missing ... 'injected'`. VoiceTyper now requires
+`pynput>=1.8.2`, which fixes that callback.
+
+The app also checks listener health every two seconds and creates a new listener
+if its thread exits. The timer remains active after startup and after permission
+changes. The status menu shows `Hotkey reconnecting…` while the listener is
+unavailable, or `Hotkey permission required` when Accessibility is not granted.
+
+After updating dependencies or source code, rebuild and reinstall the app bundle;
+updating the virtual environment alone does not update the installed app.
+
+Run the Mac regression suite from the repository root:
+
+```bash
+PYTHONPATH=mac venv/bin/python -m unittest discover -s mac/tests -v
+```
+
+On macOS this includes a real `pynput` backend test for media-key events followed
+by Control–Space, without posting keyboard events or recording audio.
