@@ -1176,6 +1176,14 @@ class LanguagePreferencesTests(unittest.TestCase):
         self.assertIsNot(app._hotkey_listener, listener)
         self.assertEqual(app._status_item.title, "Status: Ready")
 
+    def test_keyboard_layout_is_refreshed_before_listener_starts(self):
+        main = load_main_module([])
+        order = []
+        main.refresh_keyboard_layout_context = lambda: order.append("refresh")
+        with patch.object(FakeHotKeys, "start", lambda self: order.append("start")):
+            main.VoiceTyper()
+        self.assertEqual(order, ["refresh", "start"])
+
     def test_listener_start_failure_reports_unavailable_and_retries(self):
         main = load_main_module([])
         with patch.object(FakeHotKeys, "start", side_effect=RuntimeError("tap failed")):

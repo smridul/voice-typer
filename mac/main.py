@@ -12,6 +12,7 @@ Setup:
     4. Allow Accessibility access when macOS prompts you
 """
 
+import contextlib
 import threading
 import tempfile
 import wave
@@ -45,6 +46,61 @@ MIC_PERMISSION_HELPER = "VoiceTyperMicPermission"
 GROQ_REQUEST_TIMEOUT_SECONDS = 30.0
 SYSTEM_DEFAULT_MIC_LABEL = "System Default"
 REFRESH_MIC_DEVICES_LABEL = "Refresh devices"
+
+
+def _load_pynput_darwin_modules():
+    if sys.platform != "darwin":
+        return None, None
+    try:
+        from pynput._util import darwin as pynput_util_darwin
+        from pynput.keyboard import _darwin as pynput_keyboard_darwin
+    except ImportError:
+        return None, None
+    return pynput_util_darwin, pynput_keyboard_darwin
+
+
+_PYNPUT_UTIL_DARWIN, _PYNPUT_KEYBOARD_DARWIN = _load_pynput_darwin_modules()
+_keyboard_layout_context = {"value": None, "loaded": False}
+
+
+def refresh_keyboard_layout_context():
+    """Load the keyboard layout on the main thread for pynput's listener.
+
+    macOS 26 asserts that Text Input Source lookups run on the main queue.
+    pynput's keyboard Listener performs them on its own thread when it starts,
+    which kills the whole process (SIGTRAP in dispatch_assert_queue_fail)
+    whenever the input-source cache is stale, e.g. right after Accessibility
+    permission changes. Load the layout here instead and let the listener reuse
+    it through install_cached_keycode_context().
+    """
+    if _PYNPUT_UTIL_DARWIN is None:
+        return False
+    if threading.current_thread() is not threading.main_thread():
+        return _keyboard_layout_context["loaded"]
+    try:
+        with _PYNPUT_UTIL_DARWIN.keycode_context() as context:
+            _keyboard_layout_context["value"] = context
+            _keyboard_layout_context["loaded"] = True
+    except Exception as error:
+        print(f"⚠️ Unable to load keyboard layout for hotkey listener: {error}", flush=True)
+    return _keyboard_layout_context["loaded"]
+
+
+@contextlib.contextmanager
+def _cached_keycode_context():
+    # GlobalHotKeys never translates keycodes through this context, so an
+    # empty value is harmless if nothing has been loaded yet.
+    yield _keyboard_layout_context["value"]
+
+
+def install_cached_keycode_context():
+    if _PYNPUT_KEYBOARD_DARWIN is None:
+        return False
+    _PYNPUT_KEYBOARD_DARWIN.keycode_context = _cached_keycode_context
+    return True
+
+
+install_cached_keycode_context()
 
 
 def has_hotkey_permission():
@@ -447,6 +503,7 @@ class VoiceTyper(rumps.App):
             HOTKEY: self._on_hotkey
         })
         listener.daemon = True
+        refresh_keyboard_layout_context()
         listener.start()
         self._hotkey_listener = listener
         print("✅ VoiceTyper hotkey listener started.", flush=True)

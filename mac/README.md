@@ -130,6 +130,17 @@ if its thread exits. The timer remains active after startup and after permission
 changes. The status menu shows `Hotkey reconnecting…` while the listener is
 unavailable, or `Hotkey permission required` when Accessibility is not granted.
 
+If the app disappears from the menu bar right after you grant Accessibility (a
+`VoiceTyper-*.ips` crash report with `dispatch_assert_queue_fail` under
+`TSMGetInputSourceProperty`), that is macOS 26 requiring keyboard-layout lookups
+on the main queue while `pynput` performs them on its listener thread. `main.py`
+loads the layout on the main thread and hands `pynput` a cached copy, so the
+listener thread never calls into Text Input Services.
+
+Because the bundle is ad-hoc signed, every rebuild invalidates the previous
+Accessibility and Input Monitoring grants. Remove and re-add VoiceTyper.app in
+both lists after each install.
+
 After updating dependencies or source code, rebuild and reinstall the app bundle;
 updating the virtual environment alone does not update the installed app.
 
