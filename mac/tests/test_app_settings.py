@@ -42,6 +42,30 @@ class FakeMenuItem:
         self.children.clear()
 
 
+class FakeStatusItem:
+    def __init__(self):
+        self.autosave_name = None
+        self.visible = None
+
+    def setAutosaveName_(self, name):
+        self.autosave_name = name
+
+    def setVisible_(self, visible):
+        self.visible = visible
+
+
+class FakeEventEmitter:
+    def __init__(self):
+        self.callbacks = []
+
+    def register(self, callback):
+        self.callbacks.append(callback)
+
+    def emit(self):
+        for callback in self.callbacks:
+            callback()
+
+
 class FakeApp:
     def __init__(
         self,
@@ -56,6 +80,12 @@ class FakeApp:
         self.title = title
         self.menu = menu or []
         self.quit_button = quit_button
+
+    def run(self, **options):
+        # Mirrors rumps: the status item exists only once run() has started,
+        # and before_start fires right after it is created.
+        self._nsapp = types.SimpleNamespace(nsstatusitem=FakeStatusItem())
+        self.events.before_start.emit()
 
 
 class FakeStream:
@@ -130,7 +160,8 @@ def load_main_module(
 ):
     fake_rumps = types.ModuleType("rumps")
     fake_rumps.MenuItem = FakeMenuItem
-    fake_rumps.App = FakeApp
+    fake_rumps.events = types.SimpleNamespace(before_start=FakeEventEmitter())
+    fake_rumps.App = type("FakeApp", (FakeApp,), {"events": fake_rumps.events})
     fake_rumps.Timer = FakeTimer
     fake_rumps.notification = (
         lambda app_name, title, message: notifications.append(
@@ -1280,3 +1311,15 @@ class RecordMenuItemTests(unittest.TestCase):
         app._start_recording()
 
         self.assertEqual(app._record_item.title, "Start Recording")
+
+
+class StatusItemVisibilityTests(unittest.TestCase):
+    def test_run_pins_status_item_with_stable_autosave_name_and_visible(self):
+        main = load_main_module([])
+        app = main.VoiceTyper()
+
+        app.run()
+
+        status_item = app._nsapp.nsstatusitem
+        self.assertEqual(status_item.autosave_name, "VoiceTyper")
+        self.assertTrue(status_item.visible)

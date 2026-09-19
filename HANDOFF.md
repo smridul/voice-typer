@@ -1,17 +1,17 @@
 # HANDOFF
 
 ## Last completed work (2026-09-19)
-- Added a **Start Recording / Stop Recording** item to the menu bar menu (directly under the Status line) so recording can be toggled with the mouse instead of Control+Space. Shared toggle logic lives in `VoiceTyper._toggle_recording()` in `mac/main.py`; the menu path skips the hotkey-permission check so it works even before Accessibility/Input Monitoring is granted.
-- 7 new tests in `mac/tests/test_app_settings.py` (`RecordMenuItemTests`); 84 tests pass.
-- Rebuilt and installed the app to /Applications and relaunched via launchd; started cleanly, hotkey listener came up.
+- Added **Start Recording / Stop Recording** menu item (commit 90224aa). Verified end-to-end by the user (transcript pasted from a menu-driven recording).
+- Investigated "app not showing in menu bar": root cause is a macOS 26.6 Control Center bug that stops hosting newly created third-party status items (details + everything ruled out are in CLAUDE.md > Decisions and gotchas). The app itself is healthy; Control+Space works once Input Monitoring is re-granted for the rebuilt bundle.
+- `main.py`: status item now gets `autosaveName="VoiceTyper"` + `visible=True` via `_pin_status_item` (hooked on `rumps.events.before_start`). Test in `StatusItemVisibilityTests`. 85 tests pass. Rebuilt, installed, running under launchd.
 
 ## Current state
-- Working tree committed and pushed.
-- Installed app has the new menu item. User still needs to click it once in a real text field to confirm the paste lands at the cursor (status-bar menus don't steal focus, so it should).
+- Icon invisible on this machine until the OS-level state resets; hotkey works. Everything committed and pushed.
 
 ## Next steps
-- Confirm the menu item works end-to-end for the user.
+- User to log out / reboot and check whether the 🎙️ returns (cheapest untested remedy).
+- If the icon stays unreliable on macOS 26.6, decide on a fallback so the user can (a) see the app is running and (b) record mouse-only: options are a Dock icon with a Dock menu (Start/Stop Recording), or a small floating record button window. Needs user's choice.
 - Consider signing the bundle with a stable self-signed certificate so TCC grants survive rebuilds.
 
 ## Open questions
-- None.
+- Which fallback the user prefers if the menu bar icon stays broken (Dock icon+menu vs floating button).

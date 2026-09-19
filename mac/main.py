@@ -48,6 +48,7 @@ SYSTEM_DEFAULT_MIC_LABEL = "System Default"
 REFRESH_MIC_DEVICES_LABEL = "Refresh devices"
 RECORD_START_LABEL = "Start Recording"
 RECORD_STOP_LABEL = "Stop Recording"
+STATUS_ITEM_AUTOSAVE_NAME = "VoiceTyper"
 
 
 def _load_pynput_darwin_modules():
@@ -279,6 +280,24 @@ class VoiceTyper(rumps.App):
             print("❌ VoiceTyper hotkey listener not started: waiting for Accessibility/Input Monitoring permission.")
 
         print(f"✅ VoiceTyper running. Press {HOTKEY} to toggle recording.", flush=True)
+
+    def run(self, **options):
+        # rumps creates the NSStatusItem inside run() and emits before_start
+        # right after, which is the earliest point we can reach it.
+        rumps.events.before_start.register(self._pin_status_item)
+        super().run(**options)
+
+    def _pin_status_item(self):
+        """Give the status item a stable identity so macOS 26 keeps it visible.
+
+        Control Center on macOS 26 hosts every status item and tracks its
+        visibility by autosave name. rumps never sets one, so the item gets a
+        transient "Item-N" identity; once Control Center has recorded that slot
+        as hidden, the icon silently never appears again after a relaunch.
+        """
+        status_item = self._nsapp.nsstatusitem
+        status_item.setAutosaveName_(STATUS_ITEM_AUTOSAVE_NAME)
+        status_item.setVisible_(True)
 
     def _build_microphone_menu(self):
         microphone_menu = rumps.MenuItem("Microphone")
