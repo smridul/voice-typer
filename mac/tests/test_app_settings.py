@@ -54,6 +54,25 @@ class FakeStatusItem:
         self.visible = visible
 
 
+class FakeRecordPanel:
+    instances = []
+
+    def __init__(self, on_toggle):
+        self.on_toggle = on_toggle
+        self.visible = None
+        self.states = []
+        FakeRecordPanel.instances.append(self)
+
+    def show(self):
+        self.visible = True
+
+    def hide(self):
+        self.visible = False
+
+    def set_state(self, title, enabled=True):
+        self.states.append((title, enabled))
+
+
 class FakeEventEmitter:
     def __init__(self):
         self.callbacks = []
@@ -233,6 +252,9 @@ def load_main_module(
 
     fake_keychain.save_api_key = save_api_key
 
+    fake_record_panel = types.ModuleType("record_panel")
+    fake_record_panel.RecordButtonPanel = FakeRecordPanel
+
     main_path = Path(__file__).resolve().parents[1] / "main.py"
     module_name = f"voice_typer_main_test_{len(notifications)}_{id(notifications)}"
 
@@ -249,6 +271,7 @@ def load_main_module(
             "groq": fake_groq,
             "app_paths": fake_app_paths,
             "keychain": fake_keychain,
+            "record_panel": fake_record_panel,
         },
     ):
         spec = importlib.util.spec_from_file_location(module_name, main_path)
@@ -538,8 +561,53 @@ class LanguagePreferencesTests(unittest.TestCase):
                 "context_language": "en",
                 "output_language": "hi",
                 "input_device_name": None,
+                "show_record_button": True,
             },
         )
+
+    def test_load_settings_defaults_show_record_button_to_true(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            settings_path.write_text(
+                json.dumps({"context_language": "en", "output_language": "en"}),
+                encoding="utf-8",
+            )
+
+            settings = load_settings(settings_path)
+
+        self.assertTrue(settings.show_record_button)
+
+    def test_load_settings_preserves_hidden_record_button(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            settings_path.write_text(
+                json.dumps({
+                    "context_language": "en",
+                    "output_language": "en",
+                    "show_record_button": False,
+                }),
+                encoding="utf-8",
+            )
+
+            settings = load_settings(settings_path)
+
+        self.assertFalse(settings.show_record_button)
+
+    def test_load_settings_ignores_non_bool_show_record_button(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            settings_path.write_text(
+                json.dumps({
+                    "context_language": "en",
+                    "output_language": "en",
+                    "show_record_button": "no",
+                }),
+                encoding="utf-8",
+            )
+
+            settings = load_settings(settings_path)
+
+        self.assertTrue(settings.show_record_button)
 
     def test_load_settings_returns_none_input_device_when_field_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -681,6 +749,7 @@ class LanguagePreferencesTests(unittest.TestCase):
                     "context_language": "hi",
                     "output_language": "en",
                     "input_device_name": None,
+                    "show_record_button": True,
                 },
             )
             self.assertEqual(app._context_language_items["hi"].state, 1)
@@ -1323,3 +1392,109 @@ class StatusItemVisibilityTests(unittest.TestCase):
         status_item = app._nsapp.nsstatusitem
         self.assertEqual(status_item.autosave_name, "VoiceTyper")
         self.assertTrue(status_item.visible)
+
+
+class FloatingRecordButtonTests(unittest.TestCase):
+    def setUp(self):
+        FakeRecordPanel.instances.clear()
+
+    def _run_app(self, **kwargs):
+        main = load_main_module([], **kwargs)
+        app = main.VoiceTyper()
+        app.run()
+        return main, app
+
+    def test_panel_is_created_on_run_and_shown_by_default(self):
+        _main, app = self._run_app()
+
+        self.assertEqual(len(FakeRecordPanel.instances), 1)
+        panel = FakeRecordPanel.instances[0]
+        self.assertIs(app._record_panel, panel)
+        self.assertTrue(panel.visible)
+        self.assertEqual(panel.states, [("🎙️ Record", True)])
+
+    def test_panel_click_toggles_recording(self):
+        _main, app = self._run_app()
+        panel = FakeRecordPanel.instances[0]
+
+        with patch.object(app, "_start_recording") as start_recording:
+            with patch("threading.Thread") as thread:
+                panel.on_toggle()
+
+        self.assertEqual(thread.call_args.kwargs["target"], start_recording)
+        thread.return_value.start.assert_called_once()
+
+    def test_panel_title_follows_recording_state(self):
+        _main, app = self._run_app(
+            input_stream_factory=lambda **kwargs: FakeStream()
+        )
+        panel = FakeRecordPanel.instances[0]
+        panel.states.clear()
+
+        app._start_recording()
+        self.assertEqual(panel.states[-1], ("🔴 Stop", True))
+
+        app._stop_and_transcribe()  # no frames -> resets immediately
+        self.assertEqual(
+            panel.states,
+            [("🔴 Stop", True), ("⏳ Transcribing…", False), ("🎙️ Record", True)],
+        )
+
+    def test_status_updates_before_run_do_not_require_panel(self):
+        main = load_main_module([])
+        app = main.VoiceTyper()  # _reset_status runs during __init__
+
+        self.assertIsNone(app._record_panel)
+        app._reset_status()  # must not raise
+
+    def test_menu_item_reflects_setting_and_toggles_visibility(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            _main, app = self._run_app(migrated_settings_path=settings_path)
+            panel = FakeRecordPanel.instances[0]
+
+            self.assertIs(app.menu[2], app._record_button_item)
+            self.assertEqual(app._record_button_item.title, "Floating Record Button")
+            self.assertEqual(app._record_button_item.state, 1)
+
+            app._record_button_item.callback(app._record_button_item)
+
+            self.assertFalse(panel.visible)
+            self.assertEqual(app._record_button_item.state, 0)
+            self.assertFalse(app.settings.show_record_button)
+            self.assertFalse(
+                json.loads(settings_path.read_text(encoding="utf-8"))["show_record_button"]
+            )
+
+            app._record_button_item.callback(app._record_button_item)
+
+            self.assertTrue(panel.visible)
+            self.assertEqual(app._record_button_item.state, 1)
+
+    def test_panel_stays_hidden_when_setting_is_off(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            settings_path.write_text(
+                json.dumps({
+                    "context_language": "en",
+                    "output_language": "en",
+                    "show_record_button": False,
+                }),
+                encoding="utf-8",
+            )
+
+            _main, app = self._run_app(migrated_settings_path=settings_path)
+
+        panel = FakeRecordPanel.instances[0]
+        self.assertFalse(panel.visible)
+        self.assertEqual(app._record_button_item.state, 0)
+
+    def test_hiding_panel_is_not_applied_when_save_fails(self):
+        _main, app = self._run_app()
+        panel = FakeRecordPanel.instances[0]
+
+        with patch.object(app, "_save_and_apply_settings", return_value=False):
+            app._record_button_item.callback(app._record_button_item)
+
+        self.assertTrue(panel.visible)
+        self.assertTrue(app.settings.show_record_button)

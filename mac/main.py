@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 import ctypes
+from dataclasses import replace
 from pathlib import Path
 
 import rumps
@@ -38,6 +39,7 @@ from app_settings import (
 from language_processing import convert_transcript
 from app_paths import migrate_legacy_settings_if_needed
 from keychain import KeychainError, load_api_key, save_api_key
+from record_panel import RecordButtonPanel
 
 SAMPLE_RATE = 16000   # Hz — Whisper works best at 16kHz
 CHANNELS    = 1
@@ -48,6 +50,10 @@ SYSTEM_DEFAULT_MIC_LABEL = "System Default"
 REFRESH_MIC_DEVICES_LABEL = "Refresh devices"
 RECORD_START_LABEL = "Start Recording"
 RECORD_STOP_LABEL = "Stop Recording"
+SHOW_RECORD_BUTTON_LABEL = "Floating Record Button"
+RECORD_BUTTON_IDLE_TITLE = "🎙️ Record"
+RECORD_BUTTON_RECORDING_TITLE = "🔴 Stop"
+RECORD_BUTTON_BUSY_TITLE = "⏳ Transcribing…"
 STATUS_ITEM_AUTOSAVE_NAME = "VoiceTyper"
 
 
@@ -234,6 +240,13 @@ class VoiceTyper(rumps.App):
             RECORD_START_LABEL,
             callback=self._on_record_menu_item,
         )
+        # Floating on-screen button: the fallback when macOS refuses to show
+        # the menu bar icon at all. Created in _setup_record_button.
+        self._record_panel = None
+        self._record_button_item = rumps.MenuItem(
+            SHOW_RECORD_BUTTON_LABEL,
+            callback=self._toggle_record_button,
+        )
         self._set_api_key_item = rumps.MenuItem(
             "Set API Key…",
             callback=self._set_api_key,
@@ -245,6 +258,7 @@ class VoiceTyper(rumps.App):
         self.menu = [
             self._status_item,
             self._record_item,
+            self._record_button_item,
             self._set_api_key_item,
             None,
             self._build_microphone_menu(),
@@ -253,6 +267,7 @@ class VoiceTyper(rumps.App):
         ]
         self._refresh_microphone_menu()
         self._refresh_language_menu()
+        self._refresh_record_button_menu()
 
         self.client    = None
         self._api_key_invalid = False
@@ -285,6 +300,7 @@ class VoiceTyper(rumps.App):
         # rumps creates the NSStatusItem inside run() and emits before_start
         # right after, which is the earliest point we can reach it.
         rumps.events.before_start.register(self._pin_status_item)
+        rumps.events.before_start.register(self._setup_record_button)
         super().run(**options)
 
     def _pin_status_item(self):
@@ -298,6 +314,36 @@ class VoiceTyper(rumps.App):
         status_item = self._nsapp.nsstatusitem
         status_item.setAutosaveName_(STATUS_ITEM_AUTOSAVE_NAME)
         status_item.setVisible_(True)
+
+    def _setup_record_button(self):
+        # AppKit windows need the application to exist, so this waits for
+        # before_start like the status item does.
+        self._record_panel = RecordButtonPanel(self._toggle_recording)
+        self._record_panel.set_state(RECORD_BUTTON_IDLE_TITLE)
+        self._apply_record_button_visibility()
+
+    def _apply_record_button_visibility(self):
+        if self._record_panel is None:
+            return
+        if self.settings.show_record_button:
+            self._record_panel.show()
+        else:
+            self._record_panel.hide()
+
+    def _update_record_button(self, title, enabled=True):
+        if self._record_panel is not None:
+            self._record_panel.set_state(title, enabled)
+
+    def _refresh_record_button_menu(self):
+        self._record_button_item.state = int(self.settings.show_record_button)
+
+    def _toggle_record_button(self, _sender):
+        updated_settings = replace(
+            self.settings,
+            show_record_button=not self.settings.show_record_button,
+        )
+        if self._save_and_apply_settings(updated_settings):
+            self._apply_record_button_visibility()
 
     def _build_microphone_menu(self):
         microphone_menu = rumps.MenuItem("Microphone")
@@ -408,6 +454,7 @@ class VoiceTyper(rumps.App):
         self.settings = updated_settings
         self._refresh_language_menu()
         self._refresh_microphone_menu()
+        self._refresh_record_button_menu()
         return True
 
     def _set_context_language(self, sender):
@@ -623,6 +670,7 @@ class VoiceTyper(rumps.App):
             self.title = "🔴"  # Red dot in menubar while recording
             self._status_item.title = "Status: Recording…"
             self._record_item.title = RECORD_STOP_LABEL
+            self._update_record_button(RECORD_BUTTON_RECORDING_TITLE)
             self._stream.start()
         except Exception as error:
             self.recording = False
@@ -642,6 +690,8 @@ class VoiceTyper(rumps.App):
         self.title = "⏳"  # Hourglass while transcribing
         self._status_item.title = "Status: Transcribing…"
         self._record_item.title = RECORD_START_LABEL
+        # Disabled so a click cannot start a new recording mid-transcription.
+        self._update_record_button(RECORD_BUTTON_BUSY_TITLE, enabled=False)
 
         if self.client is None:
             self._reset_status()
@@ -761,6 +811,7 @@ class VoiceTyper(rumps.App):
         self.title = "🎙️"
         self._status_item.title = self._idle_status_title()
         self._record_item.title = RECORD_START_LABEL
+        self._update_record_button(RECORD_BUTTON_IDLE_TITLE)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

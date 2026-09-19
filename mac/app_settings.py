@@ -16,6 +16,7 @@ class AppSettings:
     context_language: str
     output_language: str
     input_device_name: Optional[str] = None
+    show_record_button: bool = True
 
 
 def _sanitize_language(code, fallback):
@@ -41,6 +42,8 @@ def load_settings(path):
 
     raw_device = payload.get("input_device_name")
     input_device_name = raw_device if isinstance(raw_device, str) else None
+    raw_show_button = payload.get("show_record_button")
+    show_record_button = raw_show_button if isinstance(raw_show_button, bool) else True
 
     return AppSettings(
         context_language=_sanitize_language(
@@ -52,6 +55,7 @@ def load_settings(path):
             DEFAULT_OUTPUT_LANGUAGE,
         ),
         input_device_name=input_device_name,
+        show_record_button=show_record_button,
     )
 
 
@@ -60,6 +64,7 @@ def save_settings(path, settings):
         "context_language": settings.context_language,
         "output_language": settings.output_language,
         "input_device_name": settings.input_device_name,
+        "show_record_button": settings.show_record_button,
     }
     settings_path = Path(path)
     temp_path = None

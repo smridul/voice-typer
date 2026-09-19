@@ -70,10 +70,15 @@ That avoids the flaky LaunchServices `open` path and is the recommended setup fo
 
 ## How It Works
 
-1. The app sits in the menu bar.
+1. The app sits in the menu bar and also shows a small floating
+   **🎙️ Record** button (bottom-right of the screen by default; drag its
+   edge to move it). The button never steals focus from the app you are
+   typing in. Hide or show it with **Floating Record Button** in the menu.
 2. Press the configured hotkey to start recording, or click
-   **Start Recording** in the menu bar menu (mouse-only, no keyboard needed).
-3. Press the hotkey again, or click **Stop Recording**, to stop.
+   **Start Recording** in the menu bar menu or the floating button
+   (mouse-only, no keyboard needed).
+3. Press the hotkey again, or click **Stop Recording** / the floating
+   **🔴 Stop** button, to stop.
 4. Audio is sent to Groq for transcription.
 5. The result is pasted at the current cursor.
 
@@ -106,6 +111,7 @@ If transcription fails silently after recording, the most common causes are:
 ## Files
 
 - `main.py` — app entry point
+- `record_panel.py` — floating Start/Stop Recording button (non-activating NSPanel)
 - `setup.sh` — dependency install + Keychain API key setup
 - `build-app.sh` — builds `dist/VoiceTyper.app`
 - `install-app.sh` — installs app bundle into `/Applications`
