@@ -1,6 +1,6 @@
 # VoiceTyper
 
-Voice-to-text menu bar app. Press a hotkey (Control+Space) to record, press again to stop; audio goes to Groq for transcription and the result is pasted at the cursor.
+Voice-to-text menu bar app. Press a hotkey (Control+Space) to record, press again to stop; audio goes to Groq for transcription and the result is pasted at the cursor. The menu bar menu also has a **Start Recording / Stop Recording** item that toggles the same flow with the mouse.
 
 ## Layout
 - `mac/` — macOS menu bar app (Python: rumps, pynput, sounddevice, groq). See `mac/README.md` for full setup, permissions, and troubleshooting.
@@ -27,6 +27,7 @@ Logs: `~/Library/Logs/VoiceTyper.log`
 - Updating the venv alone does not update the installed app; always rebuild and reinstall.
 - macOS 26 (Darwin 25) traps with SIGTRAP (`dispatch_assert_queue_fail` in `TSMGetInputSourceProperty`) if pynput's listener thread loads the keyboard layout while the input-source cache is stale, which happens right after a permission grant. `main.py` loads the layout on the main thread (`refresh_keyboard_layout_context`) and patches `pynput.keyboard._darwin.keycode_context` with a cached copy. Fixed 2026-09-09, uncommitted at time of writing.
 - The launch agent runs the binary directly (not via `open`) because LaunchServices `open` was flaky.
+- Start/Stop Recording menu item (2026-09-19): `_on_hotkey` and `_on_record_menu_item` both call `_toggle_recording()`. Only the hotkey path checks `_hotkey_enabled`, so the menu item works even when Accessibility/Input Monitoring hasn't been granted. The item title (`RECORD_START_LABEL` / `RECORD_STOP_LABEL`) is updated wherever the menu bar icon is updated (`_start_recording`, `_stop_and_transcribe`, `_reset_status`).
 
-## Current state (2026-09-09)
-- Mac app built from abd17f2 plus the uncommitted main-thread keyboard-layout fix, pynput 1.8.2, installed to /Applications. Needs Accessibility / Input Monitoring re-granted after each rebuild.
+## Current state (2026-09-19)
+- Mac app built from main (keyboard-layout fix c082419 + Start/Stop Recording menu item), pynput 1.8.2, installed to /Applications. Needs Accessibility / Input Monitoring re-granted after each rebuild.

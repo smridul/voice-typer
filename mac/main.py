@@ -46,6 +46,8 @@ MIC_PERMISSION_HELPER = "VoiceTyperMicPermission"
 GROQ_REQUEST_TIMEOUT_SECONDS = 30.0
 SYSTEM_DEFAULT_MIC_LABEL = "System Default"
 REFRESH_MIC_DEVICES_LABEL = "Refresh devices"
+RECORD_START_LABEL = "Start Recording"
+RECORD_STOP_LABEL = "Stop Recording"
 
 
 def _load_pynput_darwin_modules():
@@ -226,6 +228,11 @@ class VoiceTyper(rumps.App):
         self.settings = load_settings(self._settings_path)
         self.title = "🎙️"
         self._status_item = rumps.MenuItem("Status: Ready")
+        # Mouse-only alternative to the hotkey; title toggles with recording state.
+        self._record_item = rumps.MenuItem(
+            RECORD_START_LABEL,
+            callback=self._on_record_menu_item,
+        )
         self._set_api_key_item = rumps.MenuItem(
             "Set API Key…",
             callback=self._set_api_key,
@@ -236,6 +243,7 @@ class VoiceTyper(rumps.App):
         self._output_language_items = {}
         self.menu = [
             self._status_item,
+            self._record_item,
             self._set_api_key_item,
             None,
             self._build_microphone_menu(),
@@ -430,6 +438,13 @@ class VoiceTyper(rumps.App):
             )
             return
 
+        self._toggle_recording()
+
+    def _on_record_menu_item(self, _sender):
+        """Menu bar Start/Stop Recording item; works even without hotkey permission."""
+        self._toggle_recording()
+
+    def _toggle_recording(self):
         if self._api_key_invalid:
             rumps.notification(
                 "VoiceTyper",
@@ -588,6 +603,7 @@ class VoiceTyper(rumps.App):
             self.recording = True
             self.title = "🔴"  # Red dot in menubar while recording
             self._status_item.title = "Status: Recording…"
+            self._record_item.title = RECORD_STOP_LABEL
             self._stream.start()
         except Exception as error:
             self.recording = False
@@ -606,6 +622,7 @@ class VoiceTyper(rumps.App):
 
         self.title = "⏳"  # Hourglass while transcribing
         self._status_item.title = "Status: Transcribing…"
+        self._record_item.title = RECORD_START_LABEL
 
         if self.client is None:
             self._reset_status()
@@ -724,6 +741,7 @@ class VoiceTyper(rumps.App):
     def _reset_status(self):
         self.title = "🎙️"
         self._status_item.title = self._idle_status_title()
+        self._record_item.title = RECORD_START_LABEL
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

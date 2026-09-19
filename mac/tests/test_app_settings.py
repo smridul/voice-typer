@@ -1209,3 +1209,74 @@ class LanguagePreferencesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecordMenuItemTests(unittest.TestCase):
+    def test_record_menu_item_appears_below_status_and_starts_idle(self):
+        app = load_main_module([]).VoiceTyper()
+
+        self.assertIs(app.menu[1], app._record_item)
+        self.assertEqual(app._record_item.title, "Start Recording")
+
+    def test_record_menu_item_starts_recording_when_idle(self):
+        app = load_main_module([]).VoiceTyper()
+        with patch.object(app, "_start_recording") as start_recording:
+            with patch("threading.Thread") as thread:
+                app._record_item.callback(app._record_item)
+        self.assertEqual(thread.call_args.kwargs["target"], start_recording)
+        thread.return_value.start.assert_called_once()
+
+    def test_record_menu_item_stops_recording_when_recording(self):
+        app = load_main_module([]).VoiceTyper()
+        app.recording = True
+        with patch.object(app, "_stop_and_transcribe") as stop_and_transcribe:
+            with patch("threading.Thread") as thread:
+                app._record_item.callback(app._record_item)
+        self.assertEqual(thread.call_args.kwargs["target"], stop_and_transcribe)
+
+    def test_record_menu_item_works_without_hotkey_permission(self):
+        notifications = []
+        app = load_main_module(notifications, hotkey_permission=False).VoiceTyper()
+        self.assertFalse(app._hotkey_enabled)
+        notifications.clear()
+
+        with patch.object(app, "_start_recording") as start_recording:
+            with patch("threading.Thread") as thread:
+                app._record_item.callback(app._record_item)
+
+        self.assertEqual(thread.call_args.kwargs["target"], start_recording)
+        self.assertEqual(notifications, [])
+
+    def test_record_menu_item_requires_api_key(self):
+        notifications = []
+        app = load_main_module(notifications, initial_api_key=None).VoiceTyper()
+
+        with patch("threading.Thread") as thread:
+            app._record_item.callback(app._record_item)
+
+        thread.assert_not_called()
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0][1], "Setup Required")
+
+    def test_record_menu_item_title_follows_recording_state(self):
+        main = load_main_module(
+            [], input_stream_factory=lambda **kwargs: FakeStream()
+        )
+        app = main.VoiceTyper()
+
+        app._start_recording()
+        self.assertEqual(app._record_item.title, "Stop Recording")
+
+        app._stop_and_transcribe()  # no frames -> resets immediately
+        self.assertEqual(app._record_item.title, "Start Recording")
+
+    def test_record_menu_item_title_resets_when_recording_fails_to_start(self):
+        main = load_main_module(
+            [],
+            input_stream_factory=lambda **kwargs: (_ for _ in ()).throw(OSError("no mic")),
+        )
+        app = main.VoiceTyper()
+
+        app._start_recording()
+
+        self.assertEqual(app._record_item.title, "Start Recording")

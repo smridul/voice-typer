@@ -71,8 +71,9 @@ That avoids the flaky LaunchServices `open` path and is the recommended setup fo
 ## How It Works
 
 1. The app sits in the menu bar.
-2. Press the configured hotkey to start recording.
-3. Press it again to stop.
+2. Press the configured hotkey to start recording, or click
+   **Start Recording** in the menu bar menu (mouse-only, no keyboard needed).
+3. Press the hotkey again, or click **Stop Recording**, to stop.
 4. Audio is sent to Groq for transcription.
 5. The result is pasted at the current cursor.
 

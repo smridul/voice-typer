@@ -1,19 +1,16 @@
 # HANDOFF
 
-## Last completed work (2026-09-09)
-- Pulled commit abd17f2 (fix: prevent macOS media keys from disabling voice hotkey) from the other laptop.
-- Upgraded root `venv` to pynput 1.8.2, rebuilt and installed the app.
-- After the user granted Accessibility, the app crashed with SIGTRAP: pynput's listener thread called Text Input Services (`TSMGetInputSourceProperty`) and macOS 26 asserted it must run on the main queue. Crash report: `~/Library/Logs/DiagnosticReports/VoiceTyper-2026-09-09-200127.ips`.
-- Fixed in `mac/main.py`: `refresh_keyboard_layout_context()` loads the layout on the main thread before each listener start, and `install_cached_keycode_context()` patches `pynput.keyboard._darwin.keycode_context` to yield the cached value. Tests added in `mac/tests/test_hotkey_backend.py` and `mac/tests/test_app_settings.py` (77 tests pass).
-- Rebuilt and reinstalled the app with the fix. README, CLAUDE.md, HANDOFF.md updated.
+## Last completed work (2026-09-19)
+- Added a **Start Recording / Stop Recording** item to the menu bar menu (directly under the Status line) so recording can be toggled with the mouse instead of Control+Space. Shared toggle logic lives in `VoiceTyper._toggle_recording()` in `mac/main.py`; the menu path skips the hotkey-permission check so it works even before Accessibility/Input Monitoring is granted.
+- 7 new tests in `mac/tests/test_app_settings.py` (`RecordMenuItemTests`); 84 tests pass.
+- Rebuilt and installed the app to /Applications and relaunched via launchd; started cleanly, hotkey listener came up.
 
 ## Current state
-- Fix is in the working tree, NOT committed. Files changed: mac/main.py, mac/README.md, mac/tests/test_hotkey_backend.py, mac/tests/test_app_settings.py; new: CLAUDE.md, HANDOFF.md.
-- Installed app is waiting for the user to re-grant Accessibility and Input Monitoring (each rebuild invalidates the ad-hoc-signed grant).
+- Working tree committed and pushed.
+- Installed app has the new menu item. User still needs to click it once in a real text field to confirm the paste lands at the cursor (status-bar menus don't steal focus, so it should).
 
 ## Next steps
-- Confirm Control+Space works after re-granting, and that no new `VoiceTyper-*.ips` crash report appears.
-- Commit the fix once confirmed.
+- Confirm the menu item works end-to-end for the user.
 - Consider signing the bundle with a stable self-signed certificate so TCC grants survive rebuilds.
 
 ## Open questions
