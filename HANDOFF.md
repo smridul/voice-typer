@@ -5,6 +5,7 @@
 - Smoke-tested the real panel under an AppKit run loop (visible, click reaches the callback, busy state disables the button). 95 unit tests pass. Rebuilt, installed to /Applications, running under launchd; macOS reports the panel window on screen.
 
 ## Current state
+- Later on 2026-09-19: user dragged the button to the screen edge and lost it; added on-screen clamping (`keep_panel_on_screen`) and re-centered the saved position. 100 tests pass. Rebuilt and installed.
 - Floating button visible bottom-right; menu bar icon still absent (OS bug). Hotkey waiting for Accessibility/Input Monitoring re-grant after the rebuild.
 - User confirmed the floating button works end to end. Committed.
 

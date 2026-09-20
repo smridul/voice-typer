@@ -39,6 +39,53 @@ SCREEN_MARGIN = 24.0
 CORNER_RADIUS = 12.0
 
 
+def clamp_origin(origin, size, visible_frame):
+    """Return the origin that keeps a `size` rect fully inside `visible_frame`.
+
+    Pure geometry so it can be unit-tested; all arguments are (x, y) /
+    (width, height) / (x, y, width, height) tuples in AppKit coordinates.
+    """
+    x, y = origin
+    width, height = size
+    vx, vy, vwidth, vheight = visible_frame
+    max_x = vx + vwidth - width
+    max_y = vy + vheight - height
+    return (min(max(x, vx), max(vx, max_x)), min(max(y, vy), max(vy, max_y)))
+
+
+def _visible_frame_tuple(screen):
+    visible = screen.visibleFrame()
+    return (
+        visible.origin.x,
+        visible.origin.y,
+        visible.size.width,
+        visible.size.height,
+    )
+
+
+class _PanelDelegate(NSObject):
+    """Keeps the panel fully on screen after the user drags it."""
+
+    def windowDidMove_(self, notification):
+        keep_panel_on_screen(notification.object())
+
+
+def keep_panel_on_screen(panel):
+    # panel.screen() is the screen the panel mostly overlaps; None when it is
+    # entirely off screen, in which case the main screen is used.
+    screen = panel.screen() or NSScreen.mainScreen()
+    if screen is None:
+        return
+    frame = panel.frame()
+    origin = clamp_origin(
+        (frame.origin.x, frame.origin.y),
+        (frame.size.width, frame.size.height),
+        _visible_frame_tuple(screen),
+    )
+    if origin != (frame.origin.x, frame.origin.y):
+        panel.setFrameOrigin_(origin)
+
+
 class _RecordButtonTarget(NSObject):
     """Objective-C target for the button; forwards clicks to a Python callable."""
 
@@ -56,6 +103,7 @@ class _RecordButtonTarget(NSObject):
 class RecordButtonPanel:
     def __init__(self, on_toggle):
         self._target = _RecordButtonTarget.alloc().initWithCallback_(on_toggle)
+        self._delegate = _PanelDelegate.alloc().init()
         self._panel = self._build_panel()
         self._button = self._build_button(self._panel)
 
@@ -94,6 +142,10 @@ class RecordButtonPanel:
 
         # Restores the last dragged position, if any; otherwise keeps the default.
         panel.setFrameAutosaveName_(PANEL_FRAME_AUTOSAVE_NAME)
+        # A saved position can be off screen (dragged to the edge, display
+        # unplugged), which would leave the button unreachable.
+        keep_panel_on_screen(panel)
+        panel.setDelegate_(self._delegate)
         return panel
 
     def _build_button(self, panel):
@@ -124,7 +176,11 @@ class RecordButtonPanel:
 
     # ── Public API (safe to call from any thread) ─────────────────────────────
     def show(self):
-        AppHelper.callAfter(self._panel.orderFrontRegardless)
+        AppHelper.callAfter(self._show_on_main_thread)
+
+    def _show_on_main_thread(self):
+        keep_panel_on_screen(self._panel)
+        self._panel.orderFrontRegardless()
 
     def hide(self):
         AppHelper.callAfter(self._panel.orderOut_, None)
