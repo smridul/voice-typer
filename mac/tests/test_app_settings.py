@@ -61,7 +61,11 @@ class FakeRecordPanel:
         self.on_toggle = on_toggle
         self.visible = None
         self.states = []
+        self.context_menu = None
         FakeRecordPanel.instances.append(self)
+
+    def set_context_menu(self, nsmenu):
+        self.context_menu = nsmenu
 
     def show(self):
         self.visible = True
@@ -85,6 +89,14 @@ class FakeEventEmitter:
             callback()
 
 
+class FakeMenu(list):
+    """Mirrors rumps.Menu: a sequence of items backed by an NSMenu (`_menu`)."""
+
+    def __init__(self, items=()):
+        super().__init__(items)
+        self._menu = object()
+
+
 class FakeApp:
     def __init__(
         self,
@@ -99,6 +111,14 @@ class FakeApp:
         self.title = title
         self.menu = menu or []
         self.quit_button = quit_button
+
+    @property
+    def menu(self):
+        return self._menu
+
+    @menu.setter
+    def menu(self, items):
+        self._menu = FakeMenu(items)
 
     def run(self, **options):
         # Mirrors rumps: the status item exists only once run() has started,
@@ -1412,6 +1432,14 @@ class FloatingRecordButtonTests(unittest.TestCase):
         self.assertIs(app._record_panel, panel)
         self.assertTrue(panel.visible)
         self.assertEqual(panel.states, [("🎙️ Record", True)])
+
+    def test_panel_gets_the_app_menu_as_its_context_menu(self):
+        # With the menu bar icon missing, right-clicking the button is the
+        # only way to reach Microphone / languages / Quit.
+        _main, app = self._run_app()
+        panel = FakeRecordPanel.instances[0]
+
+        self.assertIs(panel.context_menu, app.menu._menu)
 
     def test_panel_click_toggles_recording(self):
         _main, app = self._run_app()

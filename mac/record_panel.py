@@ -37,6 +37,7 @@ PANEL_HEIGHT = 52.0
 BUTTON_INSET = 8.0
 SCREEN_MARGIN = 24.0
 CORNER_RADIUS = 12.0
+CONTEXT_MENU_TOOLTIP = "Right-click for microphone, language and other options"
 
 
 def clamp_origin(origin, size, visible_frame):
@@ -187,6 +188,21 @@ class RecordButtonPanel:
 
     def set_state(self, title, enabled=True):
         AppHelper.callAfter(self._apply_state, title, enabled)
+
+    def set_context_menu(self, nsmenu):
+        """Pop `nsmenu` up on right-click / Control-click anywhere on the panel.
+
+        NSView shows its `menu` for right-clicks by itself; setting it on both
+        the frosted background and the button covers the whole panel. Popping
+        up a menu does not activate the app, so pasting still targets the
+        user's frontmost app.
+        """
+        AppHelper.callAfter(self._apply_context_menu, nsmenu)
+
+    def _apply_context_menu(self, nsmenu):
+        self._panel.contentView().setMenu_(nsmenu)
+        self._button.setMenu_(nsmenu)
+        self._button.setToolTip_(CONTEXT_MENU_TOOLTIP)
 
     def _apply_state(self, title, enabled):
         self._button.setTitle_(title)

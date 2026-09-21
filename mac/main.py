@@ -319,6 +319,9 @@ class VoiceTyper(rumps.App):
         # AppKit windows need the application to exist, so this waits for
         # before_start like the status item does.
         self._record_panel = RecordButtonPanel(self._toggle_recording)
+        # Right-clicking the button opens the same menu the status item has,
+        # so Microphone / languages / Quit stay reachable without the icon.
+        self._record_panel.set_context_menu(self.menu._menu)
         self._record_panel.set_state(RECORD_BUTTON_IDLE_TITLE)
         self._apply_record_button_visibility()
 

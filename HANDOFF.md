@@ -1,17 +1,16 @@
 # HANDOFF
 
-## Last completed work (2026-09-19, afternoon)
-- Reboot did not bring the menu bar icon back (Control Center has no window for it at all), so the fallback was built: a **floating 🎙️ Record / 🔴 Stop button** (`mac/record_panel.py`, non-activating `NSPanel`), wired into `main.py` with a **Floating Record Button** menu toggle persisted as `AppSettings.show_record_button`. Chosen over a Dock icon because a Dock icon would activate the app and break the ⌘V paste into the user's editor.
-- Smoke-tested the real panel under an AppKit run loop (visible, click reaches the callback, busy state disables the button). 95 unit tests pass. Rebuilt, installed to /Applications, running under launchd; macOS reports the panel window on screen.
+## Last completed work (2026-09-21)
+- User reported "recording is not working". The running instance had been launched outside launchd (stdout → /dev/null) so there were no logs; a restart fixed it. Most likely cause: stale PortAudio device table after the saved DJI mic was unplugged (see CLAUDE.md gotchas). Not fixed in code yet.
+- Because the menu bar icon is still missing (macOS 26 bug), the user could not change the input source. Added a **right-click context menu on the floating record button** that shows the app's full menu (`RecordButtonPanel.set_context_menu`, wired in `_setup_record_button`). 101 unit tests pass; AppKit smoke test confirmed the popup opens without activating the app. Rebuilt, installed, running under launchd.
 
 ## Current state
-- Later on 2026-09-19: user dragged the button to the screen edge and lost it; added on-screen clamping (`keep_panel_on_screen`) and re-centered the saved position. 100 tests pass. Rebuilt and installed.
-- Floating button visible bottom-right; menu bar icon still absent (OS bug). Hotkey waiting for Accessibility/Input Monitoring re-grant after the rebuild.
-- User confirmed the floating button works end to end. Committed.
+- App installed and running under launchd with the right-click menu. Accessibility / Input Monitoring need re-granting after the rebuild (hotkey dead until then; floating button works regardless).
+- Menu bar icon still absent (OS bug); floating button + right-click menu is the full replacement.
 
 ## Next steps
-- Possible polish if wanted: remember/pick a specific display for the default position (currently `NSScreen.mainScreen()`, which landed on the left-hand display), a keyboard-free way to reach the menu while the icon is missing (e.g. right-click on the button opens the same menu).
+- Self-heal stale PortAudio devices: on `sd.InputStream` failure in `_start_recording`, re-init PortAudio and retry once (write the failing test first).
 - Consider signing the bundle with a stable self-signed certificate so TCC grants survive rebuilds.
 
 ## Open questions
-- Does the user want the button on a specific screen / corner by default?
+- Confirm with the user whether the DJI mic was unplugged before recording broke (would confirm the stale-device hypothesis).
