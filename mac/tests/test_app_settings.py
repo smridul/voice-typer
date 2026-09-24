@@ -141,6 +141,13 @@ class FakeBlock:
         return self
 
 
+class FakeLiveAudioDetector:
+    """The real detector needs numpy; tests mark blocks live directly."""
+
+    def feed(self, block):
+        return block.any()
+
+
 class FakeStream:
     # Tests that construct the stream themselves flip this off to simulate a
     # Bluetooth mic that is still bringing up its voice link.
@@ -302,6 +309,9 @@ def load_main_module(
 
     fake_keychain.save_api_key = save_api_key
 
+    fake_mic_warmup = types.ModuleType("mic_warmup")
+    fake_mic_warmup.LiveAudioDetector = FakeLiveAudioDetector
+
     fake_record_panel = types.ModuleType("record_panel")
     fake_record_panel.RecordButtonPanel = FakeRecordPanel
 
@@ -321,6 +331,7 @@ def load_main_module(
             "groq": fake_groq,
             "app_paths": fake_app_paths,
             "keychain": fake_keychain,
+            "mic_warmup": fake_mic_warmup,
             "record_panel": fake_record_panel,
         },
     ):

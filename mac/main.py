@@ -41,6 +41,7 @@ from app_settings import (
 from language_processing import convert_transcript
 from app_paths import migrate_legacy_settings_if_needed
 from keychain import KeychainError, load_api_key, save_api_key
+from mic_warmup import LiveAudioDetector
 from record_panel import RecordButtonPanel
 
 SAMPLE_RATE = 16000   # Hz — Whisper works best at 16kHz
@@ -60,8 +61,8 @@ RECORD_BUTTON_RECORDING_TITLE = "🔴 Stop"
 RECORD_BUTTON_BUSY_TITLE = "⏳ Transcribing…"
 RECORD_BUTTON_CONNECTING_TITLE = "🟡 Connecting…"
 MIC_WARM_MENU_LABEL = "Keep Mic Ready"
-# Bluetooth mics (DJI, AirPods) deliver exact zeros for ~3-5s after the stream
-# opens while macOS switches them to the hands-free profile. Give up waiting
+# Bluetooth mics (DJI, AirPods) deliver junk for ~3-5s after the stream opens
+# while macOS switches them to the hands-free profile (see mic_warmup.py). Give up waiting
 # after this long and record anyway, so a mic that is genuinely muted still
 # ends in "No Speech Detected" rather than hanging.
 MIC_CONNECT_TIMEOUT_SECONDS = 8
@@ -293,8 +294,9 @@ class VoiceTyper(rumps.App):
         self._stream_device = None
         self._stream_lock = threading.Lock()
         self._mic_warm_timer = None
-        # Set once the open stream has delivered a non-silent block.
+        # Set once the open stream delivers real audio (LiveAudioDetector).
         self._mic_live = threading.Event()
+        self._live_detector = LiveAudioDetector()
         self._hotkey_listener = None
         self._hotkey_enabled = False
         self._hotkey_permission_granted = False
@@ -683,9 +685,9 @@ class VoiceTyper(rumps.App):
     # ── Recording ─────────────────────────────────────────────────────────────
     def _on_audio(self, indata, frame_count, time_info, status):
         if not self._mic_live.is_set():
-            # A Bluetooth mic sends exact zeros until its voice link is up;
-            # none of that is speech, so don't record it.
-            if not indata.any():
+            # A Bluetooth mic sends silence and replayed stale audio until its
+            # voice link is up; none of that is speech, so don't record it.
+            if not self._live_detector.feed(indata):
                 return
             self._mic_live.set()
         if self.recording:
@@ -703,6 +705,7 @@ class VoiceTyper(rumps.App):
                 return
 
             self._mic_live.clear()
+            self._live_detector = LiveAudioDetector()
             stream_kwargs = {
                 "samplerate": SAMPLE_RATE,
                 "channels": CHANNELS,
