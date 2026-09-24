@@ -1,16 +1,17 @@
 # HANDOFF
 
-## Last completed work (2026-09-21)
-- User reported "recording is not working". The running instance had been launched outside launchd (stdout → /dev/null) so there were no logs; a restart fixed it. Most likely cause: stale PortAudio device table after the saved DJI mic was unplugged (see CLAUDE.md gotchas). Not fixed in code yet.
-- Because the menu bar icon is still missing (macOS 26 bug), the user could not change the input source. Added a **right-click context menu on the floating record button** that shows the app's full menu (`RecordButtonPanel.set_context_menu`, wired in `_setup_record_button`). 101 unit tests pass; AppKit smoke test confirmed the popup opens without activating the app. Rebuilt, installed, running under launchd.
+## Last completed work (2026-09-24)
+- User reported that with the Bluetooth DJI mic, the first ~3-5 s of each recording were lost: 🔴 showed immediately, but audio only started once a "Mac mini Speakers" banner appeared.
+- Root cause (measured with a probe script): the DJI over Bluetooth hands-free profile returns exact digital zeros for ~3.7 s after the stream opens.
+- Fix: silence gate + "Connecting mic…" state until real audio arrives. The stream stays open after a recording for a configurable window, set with the **Keep Mic Ready** menu (Off / 1 / 3 / 10 / 30 min / Always, default 3 min, `mic_warm_seconds` in settings.json). Also fixed the language/mic setters dropping other settings. Added a warm-mic indicator (the user asked how to tell when the warm window ends): floating button 🟢 Record / 🎙️ Record, menu bar icon 🟢 / 🎙️, and status line "Ready (mic warm)". 126 tests pass. Rebuilt, installed, running under launchd.
 
 ## Current state
-- App installed and running under launchd with the right-click menu. Accessibility / Input Monitoring need re-granting after the rebuild (hotkey dead until then; floating button works regardless).
-- Menu bar icon still absent (OS bug); floating button + right-click menu is the full replacement.
+- User confirmed on the Mac mini with the DJI that it works (2026-09-24). Committed to main.
+- Menu bar icon shows on the Mac mini; it is only missing on the MacBook Pro (macOS 26 bug). There, the Keep Mic Ready menu is reachable by right-clicking the floating button.
 
 ## Next steps
-- Self-heal stale PortAudio devices: on `sd.InputStream` failure in `_start_recording`, re-init PortAudio and retry once (write the failing test first).
+- Self-heal stale PortAudio devices: on `sd.InputStream` failure in `_open_input_stream`, re-init PortAudio and retry once (write the failing test first).
 - Consider signing the bundle with a stable self-signed certificate so TCC grants survive rebuilds.
 
 ## Open questions
-- Confirm with the user whether the DJI mic was unplugged before recording broke (would confirm the stale-device hypothesis).
+- Is the always-on orange mic dot during the warm window acceptable, or should the default be shorter?

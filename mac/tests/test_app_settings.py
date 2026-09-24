@@ -11,6 +11,7 @@ import app_settings
 from app_settings import (
     DEFAULT_CONTEXT_LANGUAGE,
     DEFAULT_OUTPUT_LANGUAGE,
+    MIC_WARM_ALWAYS,
     AppSettings,
     load_settings,
     save_settings,
@@ -127,15 +128,44 @@ class FakeApp:
         self.events.before_start.emit()
 
 
+class FakeBlock:
+    """Stands in for a numpy audio block; `live=False` is Bluetooth warm-up silence."""
+
+    def __init__(self, live=True):
+        self.live = live
+
+    def any(self):
+        return self.live
+
+    def copy(self):
+        return self
+
+
 class FakeStream:
+    # Tests that construct the stream themselves flip this off to simulate a
+    # Bluetooth mic that is still bringing up its voice link.
+    deliver_audio_on_start = True
+
+    def __init__(self, callback=None, **kwargs):
+        self.callback = callback
+        self.kwargs = kwargs
+        self.active = False
+        self.closed = False
+
     def start(self):
-        pass
+        self.active = True
+        if self.callback is not None and self.deliver_audio_on_start:
+            self.feed(FakeBlock())
+
+    def feed(self, block):
+        self.callback(block, 1, None, None)
 
     def stop(self):
-        pass
+        self.active = False
 
     def close(self):
-        pass
+        self.active = False
+        self.closed = True
 
 
 class FakeHotKeys:
@@ -215,7 +245,7 @@ def load_main_module(
             {"name": "Fake Speakers", "max_input_channels": 0},
         ]
     if input_stream_factory is None:
-        input_stream_factory = lambda **kwargs: FakeStream()
+        input_stream_factory = lambda **kwargs: FakeStream(**kwargs)
     fake_sounddevice.InputStream = input_stream_factory
     fake_sounddevice.default = types.SimpleNamespace(device=list(default_devices))
     fake_sounddevice.query_devices = lambda: available_devices
@@ -317,7 +347,7 @@ class LanguagePreferencesTests(unittest.TestCase):
                 {"name": "Fake Speakers", "max_input_channels": 0},
                 {"name": "Fake Mic", "max_input_channels": 1},
             ],
-            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(),
+            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(**kwargs),
         )
         app = main.VoiceTyper()
 
@@ -339,7 +369,7 @@ class LanguagePreferencesTests(unittest.TestCase):
                 {"name": "Fake Mic", "max_input_channels": 1},
                 {"name": "External Microphone", "max_input_channels": 1},
             ],
-            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(),
+            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(**kwargs),
         )
         app = main.VoiceTyper()
         app.settings = AppSettings(
@@ -362,7 +392,7 @@ class LanguagePreferencesTests(unittest.TestCase):
             available_devices=[
                 {"name": "Fake Mic", "max_input_channels": 1},
             ],
-            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(),
+            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(**kwargs),
         )
         app = main.VoiceTyper()
         app.settings = AppSettings(
@@ -385,7 +415,7 @@ class LanguagePreferencesTests(unittest.TestCase):
             available_devices=[
                 {"name": "External Microphone", "max_input_channels": 0},
             ],
-            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(),
+            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(**kwargs),
         )
         app = main.VoiceTyper()
         app.settings = AppSettings(
@@ -508,7 +538,7 @@ class LanguagePreferencesTests(unittest.TestCase):
         stream_calls = []
         main = load_main_module(
             notifications,
-            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(),
+            input_stream_factory=lambda **kwargs: stream_calls.append(kwargs) or FakeStream(**kwargs),
         )
         main.request_microphone_permission = lambda: False
         app = main.VoiceTyper()
@@ -582,6 +612,7 @@ class LanguagePreferencesTests(unittest.TestCase):
                 "output_language": "hi",
                 "input_device_name": None,
                 "show_record_button": True,
+                "mic_warm_seconds": 180,
             },
         )
 
@@ -770,6 +801,7 @@ class LanguagePreferencesTests(unittest.TestCase):
                     "output_language": "en",
                     "input_device_name": None,
                     "show_record_button": True,
+                    "mic_warm_seconds": 180,
                 },
             )
             self.assertEqual(app._context_language_items["hi"].state, 1)
@@ -1380,7 +1412,7 @@ class RecordMenuItemTests(unittest.TestCase):
 
     def test_record_menu_item_title_follows_recording_state(self):
         main = load_main_module(
-            [], input_stream_factory=lambda **kwargs: FakeStream()
+            [], input_stream_factory=lambda **kwargs: FakeStream(**kwargs)
         )
         app = main.VoiceTyper()
 
@@ -1454,7 +1486,7 @@ class FloatingRecordButtonTests(unittest.TestCase):
 
     def test_panel_title_follows_recording_state(self):
         _main, app = self._run_app(
-            input_stream_factory=lambda **kwargs: FakeStream()
+            input_stream_factory=lambda **kwargs: FakeStream(**kwargs)
         )
         panel = FakeRecordPanel.instances[0]
         panel.states.clear()
@@ -1462,10 +1494,12 @@ class FloatingRecordButtonTests(unittest.TestCase):
         app._start_recording()
         self.assertEqual(panel.states[-1], ("🔴 Stop", True))
 
-        app._stop_and_transcribe()  # no frames -> resets immediately
+        with patch.object(_main.threading, "Timer"):
+            app._stop_and_transcribe()  # no frames -> resets immediately
+        # The mic stays warm after a recording, so the idle button is green.
         self.assertEqual(
             panel.states,
-            [("🔴 Stop", True), ("⏳ Transcribing…", False), ("🎙️ Record", True)],
+            [("🔴 Stop", True), ("⏳ Transcribing…", False), ("🟢 Record", True)],
         )
 
     def test_status_updates_before_run_do_not_require_panel(self):
@@ -1526,3 +1560,354 @@ class FloatingRecordButtonTests(unittest.TestCase):
 
         self.assertTrue(panel.visible)
         self.assertTrue(app.settings.show_record_button)
+
+
+class MicWarmSettingsTests(unittest.TestCase):
+    def _load(self, payload):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            settings_path.write_text(json.dumps(payload), encoding="utf-8")
+            return load_settings(settings_path)
+
+    def test_defaults_to_three_minutes(self):
+        settings = self._load({"context_language": "en", "output_language": "en"})
+        self.assertEqual(settings.mic_warm_seconds, 180)
+
+    def test_accepts_off_custom_and_always(self):
+        self.assertEqual(self._load({"mic_warm_seconds": 0}).mic_warm_seconds, 0)
+        self.assertEqual(self._load({"mic_warm_seconds": 45}).mic_warm_seconds, 45)
+        self.assertEqual(
+            self._load({"mic_warm_seconds": MIC_WARM_ALWAYS}).mic_warm_seconds,
+            MIC_WARM_ALWAYS,
+        )
+
+    def test_rejects_invalid_values(self):
+        for bad in ("60", True, -5, 1.5, None):
+            self.assertEqual(self._load({"mic_warm_seconds": bad}).mic_warm_seconds, 180)
+
+    def test_round_trips(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            expected = AppSettings("en", "en", mic_warm_seconds=600)
+            save_settings(settings_path, expected)
+            self.assertEqual(load_settings(settings_path), expected)
+
+
+class MicStreamTestCase(unittest.TestCase):
+    """Helpers for tests that drive the real stream lifecycle with fakes."""
+
+    def setUp(self):
+        self.streams = []
+        self.timers = []
+        FakeStream.deliver_audio_on_start = True
+
+    def tearDown(self):
+        FakeStream.deliver_audio_on_start = True
+
+    def _factory(self, **kwargs):
+        stream = FakeStream(**kwargs)
+        self.streams.append(stream)
+        return stream
+
+    def _app(self, tmpdir, settings=None, **kwargs):
+        settings_path = Path(tmpdir) / "settings.json"
+        if settings is not None:
+            save_settings(settings_path, settings)
+        main = load_main_module(
+            [],
+            migrated_settings_path=settings_path,
+            input_stream_factory=self._factory,
+            **kwargs,
+        )
+        app = main.VoiceTyper()
+        return main, app
+
+    def _fake_timer(self, interval, function):
+        timer = types.SimpleNamespace(
+            interval=interval,
+            function=function,
+            daemon=False,
+            started=False,
+            cancelled=False,
+        )
+        timer.start = lambda: setattr(timer, "started", True)
+        timer.cancel = lambda: setattr(timer, "cancelled", True)
+        self.timers.append(timer)
+        return timer
+
+
+class MicWarmupTests(MicStreamTestCase):
+    """Bluetooth mics send digital silence for seconds after the stream opens."""
+
+    def test_silence_is_dropped_and_ui_waits_until_mic_is_live(self):
+        FakeStream.deliver_audio_on_start = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir)
+            titles = []
+
+            def wait(timeout=None):
+                # Runs where _start_recording blocks: the mic is still silent.
+                titles.append((app.title, app._status_item.title))
+                self.streams[0].feed(FakeBlock(live=False))
+                self.streams[0].feed(FakeBlock(live=True))
+                return True
+
+            with patch.object(app._mic_live, "wait", side_effect=wait):
+                app._start_recording()
+
+        self.assertEqual(titles, [("🟡", "Status: Connecting mic…")])
+        self.assertEqual(app.title, "🔴")
+        self.assertEqual(app._status_item.title, "Status: Recording…")
+        self.assertEqual(len(app.frames), 1)
+        self.assertTrue(app.frames[0].live)
+
+    def test_times_out_and_records_anyway_when_mic_stays_silent(self):
+        FakeStream.deliver_audio_on_start = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir)
+            with patch.object(app._mic_live, "wait", return_value=False):
+                app._start_recording()
+
+        self.assertTrue(app.recording)
+        self.assertEqual(app.title, "🔴")
+
+    def test_stopping_while_connecting_does_not_show_recording(self):
+        FakeStream.deliver_audio_on_start = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir)
+
+            def wait(timeout=None):
+                with patch.object(main.threading, "Timer", self._fake_timer):
+                    app._stop_and_transcribe()
+                return False
+
+            with patch.object(app._mic_live, "wait", side_effect=wait):
+                app._start_recording()
+
+        self.assertFalse(app.recording)
+        self.assertEqual(app.title, "🎙️")
+        self.assertEqual(app._record_item.title, "Start Recording")
+
+    def test_stream_stays_open_after_stop_and_is_reused(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir)
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._start_recording()
+                app._stop_and_transcribe()
+                app._start_recording()
+
+        self.assertEqual(len(self.streams), 1)
+        self.assertFalse(self.streams[0].closed)
+        self.assertEqual(self.timers[0].interval, 180)
+        self.assertTrue(self.timers[0].started)
+        self.assertTrue(self.timers[0].cancelled)
+        self.assertEqual(app.title, "🔴")
+
+    def test_warm_timer_closes_stream(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir)
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._start_recording()
+                app._stop_and_transcribe()
+            self.timers[0].function()
+
+        self.assertTrue(self.streams[0].closed)
+        self.assertIsNone(app._stream)
+
+    def test_off_closes_stream_immediately(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir, AppSettings("en", "en", mic_warm_seconds=0))
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._start_recording()
+                app._stop_and_transcribe()
+
+        self.assertTrue(self.streams[0].closed)
+        self.assertEqual(self.timers, [])
+
+    def test_always_never_schedules_close(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(
+                tmpdir, AppSettings("en", "en", mic_warm_seconds=MIC_WARM_ALWAYS)
+            )
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._start_recording()
+                app._stop_and_transcribe()
+
+        self.assertFalse(self.streams[0].closed)
+        self.assertEqual(self.timers, [])
+
+    def test_dead_warm_stream_is_replaced(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir)
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._start_recording()
+                app._stop_and_transcribe()
+                self.streams[0].active = False  # e.g. the mic was switched off
+                app._start_recording()
+
+        self.assertEqual(len(self.streams), 2)
+        self.assertTrue(self.streams[0].closed)
+
+    def test_changing_microphone_closes_warm_stream(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(
+                tmpdir,
+                available_devices=[{"name": "External Microphone", "max_input_channels": 1}],
+            )
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._start_recording()
+                app._stop_and_transcribe()
+            app._set_microphone(app._microphone_items["External Microphone"])
+
+        self.assertTrue(self.streams[0].closed)
+        self.assertIsNone(app._stream)
+
+    def test_refreshing_devices_closes_warm_stream_before_portaudio_reinit(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir)
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._start_recording()
+                app._stop_and_transcribe()
+            closed_at_terminate = []
+            main.sd._terminate = lambda: closed_at_terminate.append(self.streams[0].closed)
+            app._refresh_microphone_devices(None)
+
+        self.assertEqual(closed_at_terminate, [True])
+
+    def test_menu_selects_and_persists_warm_window(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir)
+            self.assertEqual(app._mic_warm_items[180].state, 1)
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._set_mic_warm_seconds(app._mic_warm_items[600])
+            payload = json.loads((Path(tmpdir) / "settings.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(app.settings.mic_warm_seconds, 600)
+        self.assertEqual(payload["mic_warm_seconds"], 600)
+        self.assertEqual(app._mic_warm_items[600].state, 1)
+        self.assertEqual(app._mic_warm_items[180].state, 0)
+
+    def test_switching_to_off_closes_idle_warm_stream(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir)
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._start_recording()
+                app._stop_and_transcribe()
+                app._set_mic_warm_seconds(app._mic_warm_items[0])
+
+        self.assertTrue(self.streams[0].closed)
+
+    def test_changing_language_keeps_other_settings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(
+                tmpdir,
+                AppSettings("en", "en", show_record_button=False, mic_warm_seconds=600),
+            )
+            app._set_context_language(app._context_language_items["hi"])
+            app._set_output_language(app._output_language_items["hi"])
+
+        self.assertFalse(app.settings.show_record_button)
+        self.assertEqual(app.settings.mic_warm_seconds, 600)
+
+
+class ReadyIndicatorTests(MicStreamTestCase):
+    """The floating button shows 🟢 while the mic is warm, 🎙️ once it is closed."""
+
+    def _run(self, tmpdir, settings=None):
+        FakeRecordPanel.instances.clear()
+        main, app = self._app(tmpdir, settings)
+        app.run()
+        return main, app, FakeRecordPanel.instances[0]
+
+    def test_green_after_recording_then_mic_icon_when_window_ends(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app, panel = self._run(tmpdir)
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._start_recording()
+                app._stop_and_transcribe()
+            self.assertEqual(panel.states[-1], ("🟢 Record", True))
+
+            self.timers[0].function()  # warm window ends
+
+        self.assertEqual(panel.states[-1], ("🎙️ Record", True))
+
+    def test_off_goes_straight_back_to_mic_icon(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app, panel = self._run(tmpdir, AppSettings("en", "en", mic_warm_seconds=0))
+            app._start_recording()
+            app._stop_and_transcribe()
+
+        self.assertEqual(panel.states[-1], ("🎙️ Record", True))
+
+    def test_dead_warm_stream_is_not_shown_as_ready(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app, panel = self._run(tmpdir)
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._start_recording()
+                app._stop_and_transcribe()
+            self.streams[0].active = False  # mic switched off while warm
+            app._reset_status()  # what the 2-second health check does
+
+        self.assertEqual(panel.states[-1], ("🎙️ Record", True))
+
+    def test_closing_warm_stream_during_transcription_keeps_busy_button(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app, panel = self._run(tmpdir)
+            app._start_recording()
+            app.recording = False
+            app._status_item.title = "Status: Transcribing…"
+            panel.states.clear()
+            app._close_input_stream()
+
+        self.assertEqual(panel.states, [])
+
+    def test_always_turns_green_once_mic_is_live_at_launch(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app, panel = self._run(
+                tmpdir, AppSettings("en", "en", mic_warm_seconds=MIC_WARM_ALWAYS)
+            )
+            app._warm_up_mic()
+
+        self.assertEqual(panel.states[-1], ("🟢 Record", True))
+
+
+class MenuBarReadyIndicatorTests(MicStreamTestCase):
+    """The menu bar icon and status line mirror the floating button's warm state."""
+
+    def test_menu_bar_shows_warm_mic_then_returns_to_mic_icon(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir)
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._start_recording()
+                app._stop_and_transcribe()
+            self.assertEqual(app.title, "🟢")
+            self.assertEqual(app._status_item.title, "Status: Ready (mic warm)")
+
+            self.timers[0].function()  # warm window ends
+
+        self.assertEqual(app.title, "🎙️")
+        self.assertEqual(app._status_item.title, "Status: Ready")
+
+    def test_problem_status_wins_over_warm_mic(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir)
+            with patch.object(main.threading, "Timer", self._fake_timer):
+                app._start_recording()
+                app._stop_and_transcribe()
+            app._hotkey_enabled = False
+            app._hotkey_permission_granted = False
+            app._reset_status()
+
+        self.assertEqual(app._status_item.title, "Status: Hotkey permission required")
+
+    def test_window_ending_mid_transcription_keeps_busy_menu_bar(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main, app = self._app(tmpdir)
+            app._start_recording()
+            app.recording = False
+            app.title = "⏳"
+            app._status_item.title = "Status: Transcribing…"
+            app._close_input_stream()
+
+        self.assertEqual(app.title, "⏳")
+        self.assertEqual(app._status_item.title, "Status: Transcribing…")

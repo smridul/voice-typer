@@ -32,6 +32,8 @@ from pynput import keyboard
 from groq import AuthenticationError, Groq
 from app_settings import (
     LANGUAGE_LABELS,
+    MIC_WARM_ALWAYS,
+    MIC_WARM_LABELS,
     AppSettings,
     load_settings,
     save_settings,
@@ -52,8 +54,17 @@ RECORD_START_LABEL = "Start Recording"
 RECORD_STOP_LABEL = "Stop Recording"
 SHOW_RECORD_BUTTON_LABEL = "Floating Record Button"
 RECORD_BUTTON_IDLE_TITLE = "🎙️ Record"
+# Idle, but the mic is still open from "Keep Mic Ready": recording starts instantly.
+RECORD_BUTTON_READY_TITLE = "🟢 Record"
 RECORD_BUTTON_RECORDING_TITLE = "🔴 Stop"
 RECORD_BUTTON_BUSY_TITLE = "⏳ Transcribing…"
+RECORD_BUTTON_CONNECTING_TITLE = "🟡 Connecting…"
+MIC_WARM_MENU_LABEL = "Keep Mic Ready"
+# Bluetooth mics (DJI, AirPods) deliver exact zeros for ~3-5s after the stream
+# opens while macOS switches them to the hands-free profile. Give up waiting
+# after this long and record anyway, so a mic that is genuinely muted still
+# ends in "No Speech Detected" rather than hanging.
+MIC_CONNECT_TIMEOUT_SECONDS = 8
 STATUS_ITEM_AUTOSAVE_NAME = "VoiceTyper"
 
 
@@ -253,6 +264,7 @@ class VoiceTyper(rumps.App):
         )
         self._microphone_menu = None
         self._microphone_items = {}
+        self._mic_warm_items = {}
         self._context_language_items = {}
         self._output_language_items = {}
         self.menu = [
@@ -262,18 +274,27 @@ class VoiceTyper(rumps.App):
             self._set_api_key_item,
             None,
             self._build_microphone_menu(),
+            self._build_mic_warm_menu(),
             None,
             *self._build_language_menu(),
         ]
         self._refresh_microphone_menu()
         self._refresh_language_menu()
         self._refresh_record_button_menu()
+        self._refresh_mic_warm_menu()
 
         self.client    = None
         self._api_key_invalid = False
         self.recording = False
         self.frames    = []
+        # The input stream outlives a single recording (see "Keep Mic Ready").
+        # _stream_lock guards _stream, _stream_device and _mic_warm_timer.
         self._stream   = None
+        self._stream_device = None
+        self._stream_lock = threading.Lock()
+        self._mic_warm_timer = None
+        # Set once the open stream has delivered a non-silent block.
+        self._mic_live = threading.Event()
         self._hotkey_listener = None
         self._hotkey_enabled = False
         self._hotkey_permission_granted = False
@@ -301,6 +322,7 @@ class VoiceTyper(rumps.App):
         # right after, which is the earliest point we can reach it.
         rumps.events.before_start.register(self._pin_status_item)
         rumps.events.before_start.register(self._setup_record_button)
+        rumps.events.before_start.register(self._warm_up_mic_if_always)
         super().run(**options)
 
     def _pin_status_item(self):
@@ -322,7 +344,7 @@ class VoiceTyper(rumps.App):
         # Right-clicking the button opens the same menu the status item has,
         # so Microphone / languages / Quit stay reachable without the icon.
         self._record_panel.set_context_menu(self.menu._menu)
-        self._record_panel.set_state(RECORD_BUTTON_IDLE_TITLE)
+        self._record_panel.set_state(self._idle_record_button_title())
         self._apply_record_button_visibility()
 
     def _apply_record_button_visibility(self):
@@ -399,6 +421,8 @@ class VoiceTyper(rumps.App):
     def _refresh_microphone_devices(self, _sender):
         # PortAudio caches the device list at init time, so devices paired
         # after app launch (e.g. AirPods) won't appear without re-init.
+        # Terminating PortAudio invalidates open streams, so drop the warm one.
+        self._close_input_stream()
         try:
             sd._terminate()
             sd._initialize()
@@ -406,6 +430,7 @@ class VoiceTyper(rumps.App):
             print(f"⚠️ PortAudio re-init failed: {error}")
 
         self._populate_microphone_devices()
+        self._warm_up_mic_if_always()
         if self._microphone_menu is not None:
             refresh_item = rumps.MenuItem(
                 REFRESH_MIC_DEVICES_LABEL,
@@ -458,6 +483,7 @@ class VoiceTyper(rumps.App):
         self._refresh_language_menu()
         self._refresh_microphone_menu()
         self._refresh_record_button_menu()
+        self._refresh_mic_warm_menu()
         return True
 
     def _set_context_language(self, sender):
@@ -465,11 +491,7 @@ class VoiceTyper(rumps.App):
         if language_code == self.settings.context_language:
             return
 
-        updated_settings = AppSettings(
-            context_language=language_code,
-            output_language=self.settings.output_language,
-            input_device_name=self.settings.input_device_name,
-        )
+        updated_settings = replace(self.settings, context_language=language_code)
         self._save_and_apply_settings(updated_settings)
 
     def _set_output_language(self, sender):
@@ -477,11 +499,7 @@ class VoiceTyper(rumps.App):
         if language_code == self.settings.output_language:
             return
 
-        updated_settings = AppSettings(
-            context_language=self.settings.context_language,
-            output_language=language_code,
-            input_device_name=self.settings.input_device_name,
-        )
+        updated_settings = replace(self.settings, output_language=language_code)
         self._save_and_apply_settings(updated_settings)
 
     def _set_microphone(self, sender):
@@ -489,12 +507,35 @@ class VoiceTyper(rumps.App):
         if device_name == self.settings.input_device_name:
             return
 
-        updated_settings = AppSettings(
-            context_language=self.settings.context_language,
-            output_language=self.settings.output_language,
-            input_device_name=device_name,
-        )
-        self._save_and_apply_settings(updated_settings)
+        updated_settings = replace(self.settings, input_device_name=device_name)
+        if self._save_and_apply_settings(updated_settings):
+            # Don't keep the previous mic open; the next recording opens the new one.
+            self._close_input_stream()
+            self._warm_up_mic_if_always()
+
+    def _build_mic_warm_menu(self):
+        warm_menu = rumps.MenuItem(MIC_WARM_MENU_LABEL)
+        for seconds, label in MIC_WARM_LABELS.items():
+            item = rumps.MenuItem(label, callback=self._set_mic_warm_seconds)
+            item.warm_seconds = seconds
+            self._mic_warm_items[seconds] = item
+            warm_menu[label] = item
+        return warm_menu
+
+    def _refresh_mic_warm_menu(self):
+        for seconds, item in self._mic_warm_items.items():
+            item.state = int(seconds == self.settings.mic_warm_seconds)
+
+    def _set_mic_warm_seconds(self, sender):
+        seconds = sender.warm_seconds
+        if seconds == self.settings.mic_warm_seconds:
+            return
+
+        updated_settings = replace(self.settings, mic_warm_seconds=seconds)
+        if self._save_and_apply_settings(updated_settings) and not self.recording:
+            # Apply the new window to a mic that is already warm.
+            self._schedule_mic_cooldown()
+            self._warm_up_mic_if_always()
 
     # ── Hotkey handler ────────────────────────────────────────────────────────
     def _on_hotkey(self):
@@ -640,11 +681,105 @@ class VoiceTyper(rumps.App):
         return None
 
     # ── Recording ─────────────────────────────────────────────────────────────
+    def _on_audio(self, indata, frame_count, time_info, status):
+        if not self._mic_live.is_set():
+            # A Bluetooth mic sends exact zeros until its voice link is up;
+            # none of that is speech, so don't record it.
+            if not indata.any():
+                return
+            self._mic_live.set()
+        if self.recording:
+            self.frames.append(indata.copy())
+
+    def _open_input_stream(self):
+        """Start an input stream, or reuse the warm one if it still fits."""
+        device = self._resolve_input_device()
+        with self._stream_lock:
+            self._cancel_mic_warm_timer()
+            stream = self._stream
+            if stream is not None and (not stream.active or self._stream_device != device):
+                self._close_stream_locked()
+            if self._stream is not None:
+                return
+
+            self._mic_live.clear()
+            stream_kwargs = {
+                "samplerate": SAMPLE_RATE,
+                "channels": CHANNELS,
+                "dtype": "int16",
+                "callback": self._on_audio,
+            }
+            if device is not None:
+                stream_kwargs["device"] = device
+            stream = sd.InputStream(**stream_kwargs)
+            try:
+                stream.start()
+            except Exception:
+                stream.close()
+                raise
+            self._stream = stream
+            self._stream_device = device
+
+    def _close_stream_locked(self):
+        stream, self._stream = self._stream, None
+        self._stream_device = None
+        self._mic_live.clear()
+        if stream is None:
+            return
+        try:
+            stream.stop()
+            stream.close()
+        except Exception as error:
+            print(f"⚠️ Error closing input stream: {error}", flush=True)
+
+    def _close_input_stream(self):
+        with self._stream_lock:
+            self._cancel_mic_warm_timer()
+            if not self.recording:
+                self._close_stream_locked()
+        self._refresh_idle_status()
+
+    def _cancel_mic_warm_timer(self):
+        if self._mic_warm_timer is not None:
+            self._mic_warm_timer.cancel()
+            self._mic_warm_timer = None
+
+    def _schedule_mic_cooldown(self):
+        """Keep the idle stream open for the configured "Keep Mic Ready" window."""
+        warm_seconds = self.settings.mic_warm_seconds
+        if warm_seconds == 0:
+            self._close_input_stream()
+            return
+        with self._stream_lock:
+            self._cancel_mic_warm_timer()
+            if self._stream is None or warm_seconds == MIC_WARM_ALWAYS:
+                return
+            timer = threading.Timer(warm_seconds, self._close_input_stream)
+            timer.daemon = True
+            self._mic_warm_timer = timer
+            timer.start()
+
+    def _warm_up_mic_if_always(self):
+        if self.settings.mic_warm_seconds != MIC_WARM_ALWAYS or self.recording:
+            return
+        threading.Thread(target=self._warm_up_mic, daemon=True).start()
+
+    def _warm_up_mic(self):
+        if not request_microphone_permission():
+            return
+        try:
+            self._open_input_stream()
+        except Exception as error:
+            print(f"⚠️ Unable to keep the mic ready: {error}", flush=True)
+            return
+        # Bluetooth mics take a few seconds to go live; turn 🟢 once they do.
+        self._mic_live.wait(MIC_CONNECT_TIMEOUT_SECONDS)
+        self._refresh_idle_status()
+
     def _start_recording(self):
         self.frames = []
         if not request_microphone_permission():
             self.recording = False
-            self._stream = None
             self._reset_status()
             rumps.notification(
                 "VoiceTyper",
@@ -653,42 +788,43 @@ class VoiceTyper(rumps.App):
             )
             return
 
-        def callback(indata, frame_count, time_info, status):
-            if self.recording:
-                self.frames.append(indata.copy())
-
         try:
-            stream_kwargs = {
-                "samplerate": SAMPLE_RATE,
-                "channels": CHANNELS,
-                "dtype": "int16",
-                "callback": callback,
-            }
-            input_device = self._resolve_input_device()
-            if input_device is not None:
-                stream_kwargs["device"] = input_device
-
-            self._stream = sd.InputStream(**stream_kwargs)
-            self.recording = True
-            self.title = "🔴"  # Red dot in menubar while recording
-            self._status_item.title = "Status: Recording…"
-            self._record_item.title = RECORD_STOP_LABEL
-            self._update_record_button(RECORD_BUTTON_RECORDING_TITLE)
-            self._stream.start()
+            self._open_input_stream()
         except Exception as error:
             self.recording = False
-            self._stream = None
             self._reset_status()
             print(f"❌ Failed to start recording: {error}")
             rumps.notification("VoiceTyper", "Error", f"Failed to start recording: {error}")
+            return
+
+        self.recording = True
+        self._record_item.title = RECORD_STOP_LABEL
+        if not self._mic_live.is_set():
+            # Don't show 🔴 until the mic actually delivers audio, or the
+            # user starts talking into a mic that is still connecting.
+            self.title = "🟡"
+            self._status_item.title = "Status: Connecting mic…"
+            self._update_record_button(RECORD_BUTTON_CONNECTING_TITLE)
+            if not self._mic_live.wait(MIC_CONNECT_TIMEOUT_SECONDS):
+                print(
+                    f"⚠️ Mic sent only silence for {MIC_CONNECT_TIMEOUT_SECONDS}s; "
+                    "recording anyway.",
+                    flush=True,
+                )
+                self._mic_live.set()
+            if not self.recording:
+                return  # Stopped while the mic was still connecting.
+
+        self.title = "🔴"  # Red dot in menubar while recording
+        self._status_item.title = "Status: Recording…"
+        self._update_record_button(RECORD_BUTTON_RECORDING_TITLE)
 
     def _stop_and_transcribe(self):
-        # Stop the stream
         self.recording = False
-        if self._stream:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+        # The stream keeps running while warm, so take the frames out from
+        # under the audio callback.
+        frames, self.frames = self.frames, []
+        self._schedule_mic_cooldown()
 
         self.title = "⏳"  # Hourglass while transcribing
         self._status_item.title = "Status: Transcribing…"
@@ -700,7 +836,7 @@ class VoiceTyper(rumps.App):
             self._reset_status()
             return
 
-        if not self.frames:
+        if not frames:
             self._reset_status()
             return
 
@@ -710,7 +846,7 @@ class VoiceTyper(rumps.App):
         # Send to Whisper
         try:
             # Save recorded audio to a temp WAV file before transcription.
-            audio = np.concatenate(self.frames, axis=0)
+            audio = np.concatenate(frames, axis=0)
             tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             tmp_name = tmp.name
             tmp.close()
@@ -808,13 +944,30 @@ class VoiceTyper(rumps.App):
             return "Status: API key invalid"
         if self.client is None:
             return "Status: API key required"
+        if self._mic_is_warm():
+            return "Status: Ready (mic warm)"
         return "Status: Ready"
 
     def _reset_status(self):
-        self.title = "🎙️"
+        self.title = "🟢" if self._mic_is_warm() else "🎙️"
         self._status_item.title = self._idle_status_title()
         self._record_item.title = RECORD_START_LABEL
-        self._update_record_button(RECORD_BUTTON_IDLE_TITLE)
+        self._update_record_button(self._idle_record_button_title())
+
+    def _mic_is_warm(self):
+        """True while "Keep Mic Ready" holds a live stream: recording starts instantly."""
+        stream = self._stream
+        return stream is not None and stream.active and self._mic_live.is_set()
+
+    def _idle_record_button_title(self):
+        if self._mic_is_warm():
+            return RECORD_BUTTON_READY_TITLE
+        return RECORD_BUTTON_IDLE_TITLE
+
+    def _refresh_idle_status(self):
+        # Leave the display alone mid-recording or mid-transcription.
+        if not self.recording and self._status_item.title != "Status: Transcribing…":
+            self._reset_status()
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
