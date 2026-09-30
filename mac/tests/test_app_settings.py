@@ -58,8 +58,10 @@ class FakeStatusItem:
 class FakeRecordPanel:
     instances = []
 
-    def __init__(self, on_toggle):
+    def __init__(self, on_toggle, on_paste, on_enter):
         self.on_toggle = on_toggle
+        self.on_paste = on_paste
+        self.on_enter = on_enter
         self.visible = None
         self.states = []
         self.context_menu = None
@@ -1494,6 +1496,68 @@ class FloatingRecordButtonTests(unittest.TestCase):
 
         self.assertEqual(thread.call_args.kwargs["target"], start_recording)
         thread.return_value.start.assert_called_once()
+
+    def test_paste_button_sends_cmd_v_in_background(self):
+        _main, app = self._run_app()
+        panel = FakeRecordPanel.instances[0]
+
+        with patch("threading.Thread") as thread:
+            panel.on_paste()
+
+        self.assertEqual(thread.call_args.kwargs["target"], app._paste_clipboard)
+        thread.return_value.start.assert_called_once()
+
+    def test_enter_button_sends_return_in_background(self):
+        _main, app = self._run_app()
+        panel = FakeRecordPanel.instances[0]
+
+        with patch("threading.Thread") as thread:
+            panel.on_enter()
+
+        self.assertEqual(thread.call_args.kwargs["target"], app._press_enter)
+        thread.return_value.start.assert_called_once()
+
+    def _run_keystroke(self, method_name, returncode=0):
+        notifications = []
+        main = load_main_module(notifications)
+        app = main.VoiceTyper()
+        with patch.object(
+            main.subprocess,
+            "run",
+            return_value=types.SimpleNamespace(
+                returncode=returncode, stdout="", stderr="Automation not allowed"
+            ),
+        ) as run:
+            getattr(app, method_name)()
+        return run, notifications
+
+    def test_paste_clipboard_runs_system_events_cmd_v(self):
+        run, notifications = self._run_keystroke("_paste_clipboard")
+
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "osascript",
+                "-e",
+                'tell application "System Events" to keystroke "v" using command down',
+            ],
+        )
+        self.assertEqual(notifications, [])
+
+    def test_press_enter_runs_system_events_return(self):
+        run, notifications = self._run_keystroke("_press_enter")
+
+        self.assertEqual(
+            run.call_args.args[0],
+            ["osascript", "-e", 'tell application "System Events" to key code 36'],
+        )
+        self.assertEqual(notifications, [])
+
+    def test_blocked_keystroke_notifies(self):
+        _run, notifications = self._run_keystroke("_press_enter", returncode=1)
+
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0][1], "Keystroke Blocked")
 
     def test_panel_title_follows_recording_state(self):
         _main, app = self._run_app(

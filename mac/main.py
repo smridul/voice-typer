@@ -57,6 +57,8 @@ SHOW_RECORD_BUTTON_LABEL = "Floating Record Button"
 RECORD_BUTTON_IDLE_TITLE = "🎙️ Record"
 # Idle, but the mic is still open from "Keep Mic Ready": recording starts instantly.
 RECORD_BUTTON_READY_TITLE = "🟢 Record"
+PASTE_APPLESCRIPT = 'tell application "System Events" to keystroke "v" using command down'
+ENTER_APPLESCRIPT = 'tell application "System Events" to key code 36'  # Return
 RECORD_BUTTON_RECORDING_TITLE = "🔴 Stop"
 RECORD_BUTTON_BUSY_TITLE = "⏳ Transcribing…"
 RECORD_BUTTON_CONNECTING_TITLE = "🟡 Connecting…"
@@ -342,7 +344,11 @@ class VoiceTyper(rumps.App):
     def _setup_record_button(self):
         # AppKit windows need the application to exist, so this waits for
         # before_start like the status item does.
-        self._record_panel = RecordButtonPanel(self._toggle_recording)
+        self._record_panel = RecordButtonPanel(
+            self._toggle_recording,
+            on_paste=self._on_paste_button,
+            on_enter=self._on_enter_button,
+        )
         # Right-clicking the button opens the same menu the status item has,
         # so Microphone / languages / Quit stay reachable without the icon.
         self._record_panel.set_context_menu(self.menu._menu)
@@ -908,26 +914,53 @@ class VoiceTyper(rumps.App):
             self._reset_status()
 
     # ── Typing ────────────────────────────────────────────────────────────────
-    def _type_text(self, text: str):
-        """Copy text to clipboard and paste it at the cursor position."""
-        pyperclip.copy(text)
-        time.sleep(0.15)  # Small pause so the clipboard settles
-
+    def _send_keystroke(self, applescript: str) -> bool:
+        """Send a keystroke to the frontmost app via System Events."""
         result = subprocess.run(
-            [
-                "osascript",
-                "-e",
-                'tell application "System Events" to keystroke "v" using command down',
-            ],
+            ["osascript", "-e", applescript],
             capture_output=True,
             text=True,
             check=False,
         )
         if result.returncode != 0:
             print(
-                "⚠️ Automatic paste failed after copying text to the clipboard: "
-                f"{result.stderr.strip() or result.stdout.strip() or 'unknown error'}"
+                f"⚠️ Keystroke failed ({applescript}): "
+                f"{result.stderr.strip() or result.stdout.strip() or 'unknown error'}",
+                flush=True,
             )
+            return False
+        return True
+
+    # The floating panel never activates VoiceTyper, so these keystrokes land
+    # in whatever app the user is typing in. osascript takes ~100 ms, so it
+    # runs off the main thread.
+    def _on_paste_button(self):
+        threading.Thread(target=self._paste_clipboard, daemon=True).start()
+
+    def _on_enter_button(self):
+        threading.Thread(target=self._press_enter, daemon=True).start()
+
+    def _paste_clipboard(self):
+        if not self._send_keystroke(PASTE_APPLESCRIPT):
+            self._notify_keystroke_blocked()
+
+    def _press_enter(self):
+        if not self._send_keystroke(ENTER_APPLESCRIPT):
+            self._notify_keystroke_blocked()
+
+    def _notify_keystroke_blocked(self):
+        rumps.notification(
+            "VoiceTyper",
+            "Keystroke Blocked",
+            "Allow VoiceTyper to control System Events under Privacy & Security > Automation.",
+        )
+
+    def _type_text(self, text: str):
+        """Copy text to clipboard and paste it at the cursor position."""
+        pyperclip.copy(text)
+        time.sleep(0.15)  # Small pause so the clipboard settles
+
+        if not self._send_keystroke(PASTE_APPLESCRIPT):
             rumps.notification(
                 "VoiceTyper",
                 "Copied to Clipboard",

@@ -1,10 +1,11 @@
-"""Floating Start/Stop Recording button.
+"""Floating Start/Stop Recording button, plus Paste (⌘V) and Enter buttons.
 
 Fallback control for when the menu bar icon is unavailable (macOS 26 Control
 Center sometimes refuses to host third-party status items). The panel is a
 non-activating NSPanel: clicking its button never makes VoiceTyper the
 frontmost app, so the transcript is still pasted into whatever app the user
-was typing in.
+was typing in. For the same reason the Paste and Enter buttons send their
+keystrokes to that app: click into the target text field, then click them.
 """
 
 import objc
@@ -31,10 +32,19 @@ from Foundation import NSMakeRect
 from PyObjCTools import AppHelper
 
 PANEL_FRAME_AUTOSAVE_NAME = "VoiceTyperRecordButton"
-PANEL_WIDTH = 168.0
 PANEL_HEIGHT = 52.0
-# Margin around the button that stays free for dragging the panel.
+# Margin around the buttons that stays free for dragging the panel.
 BUTTON_INSET = 8.0
+BUTTON_GAP = 6.0
+RECORD_BUTTON_WIDTH = 116.0
+KEY_BUTTON_WIDTH = 44.0
+PANEL_WIDTH = (
+    2 * BUTTON_INSET + RECORD_BUTTON_WIDTH + 2 * (BUTTON_GAP + KEY_BUTTON_WIDTH)
+)
+PASTE_BUTTON_TITLE = "📋"
+ENTER_BUTTON_TITLE = "⏎"
+PASTE_TOOLTIP = "Paste the last transcript (⌘V) into the app you are typing in"
+ENTER_TOOLTIP = "Press Return in the app you are typing in"
 SCREEN_MARGIN = 24.0
 CORNER_RADIUS = 12.0
 CONTEXT_MENU_TOOLTIP = "Right-click for microphone, language and other options"
@@ -88,25 +98,42 @@ def keep_panel_on_screen(panel):
 
 
 class _RecordButtonTarget(NSObject):
-    """Objective-C target for the button; forwards clicks to a Python callable."""
+    """Objective-C target for the buttons; forwards clicks to Python callables."""
 
-    def initWithCallback_(self, callback):
+    def initWithCallbacks_(self, callbacks):
         self = objc.super(_RecordButtonTarget, self).init()
         if self is None:
             return None
-        self._callback = callback
+        self._on_toggle, self._on_paste, self._on_enter = callbacks
         return self
 
     def toggle_(self, _sender):
-        self._callback()
+        self._on_toggle()
+
+    def paste_(self, _sender):
+        self._on_paste()
+
+    def enter_(self, _sender):
+        self._on_enter()
 
 
 class RecordButtonPanel:
-    def __init__(self, on_toggle):
-        self._target = _RecordButtonTarget.alloc().initWithCallback_(on_toggle)
+    def __init__(self, on_toggle, on_paste, on_enter):
+        self._target = _RecordButtonTarget.alloc().initWithCallbacks_(
+            (on_toggle, on_paste, on_enter)
+        )
         self._delegate = _PanelDelegate.alloc().init()
         self._panel = self._build_panel()
-        self._button = self._build_button(self._panel)
+        x = BUTTON_INSET
+        self._button = self._build_button(x, RECORD_BUTTON_WIDTH, "toggle:")
+        x += RECORD_BUTTON_WIDTH + BUTTON_GAP
+        self._paste_button = self._build_button(x, KEY_BUTTON_WIDTH, "paste:")
+        self._paste_button.setTitle_(PASTE_BUTTON_TITLE)
+        self._paste_button.setToolTip_(PASTE_TOOLTIP)
+        x += KEY_BUTTON_WIDTH + BUTTON_GAP
+        self._enter_button = self._build_button(x, KEY_BUTTON_WIDTH, "enter:")
+        self._enter_button.setTitle_(ENTER_BUTTON_TITLE)
+        self._enter_button.setToolTip_(ENTER_TOOLTIP)
 
     # ── Construction ──────────────────────────────────────────────────────────
     def _build_panel(self):
@@ -143,25 +170,23 @@ class RecordButtonPanel:
 
         # Restores the last dragged position, if any; otherwise keeps the default.
         panel.setFrameAutosaveName_(PANEL_FRAME_AUTOSAVE_NAME)
+        # The saved frame also restores the size, which is stale when the
+        # layout changes (the panel used to hold only the Record button).
+        panel.setContentSize_((PANEL_WIDTH, PANEL_HEIGHT))
         # A saved position can be off screen (dragged to the edge, display
         # unplugged), which would leave the button unreachable.
         keep_panel_on_screen(panel)
         panel.setDelegate_(self._delegate)
         return panel
 
-    def _build_button(self, panel):
+    def _build_button(self, x, width, action):
         button = NSButton.alloc().initWithFrame_(
-            NSMakeRect(
-                BUTTON_INSET,
-                BUTTON_INSET,
-                PANEL_WIDTH - 2 * BUTTON_INSET,
-                PANEL_HEIGHT - 2 * BUTTON_INSET,
-            )
+            NSMakeRect(x, BUTTON_INSET, width, PANEL_HEIGHT - 2 * BUTTON_INSET)
         )
         button.setBezelStyle_(NSBezelStyleRounded)
         button.setTarget_(self._target)
-        button.setAction_("toggle:")
-        panel.contentView().addSubview_(button)
+        button.setAction_(action)
+        self._panel.contentView().addSubview_(button)
         return button
 
     @staticmethod
@@ -192,8 +217,8 @@ class RecordButtonPanel:
     def set_context_menu(self, nsmenu):
         """Pop `nsmenu` up on right-click / Control-click anywhere on the panel.
 
-        NSView shows its `menu` for right-clicks by itself; setting it on both
-        the frosted background and the button covers the whole panel. Popping
+        NSView shows its `menu` for right-clicks by itself; setting it on the
+        frosted background and every button covers the whole panel. Popping
         up a menu does not activate the app, so pasting still targets the
         user's frontmost app.
         """
@@ -201,7 +226,8 @@ class RecordButtonPanel:
 
     def _apply_context_menu(self, nsmenu):
         self._panel.contentView().setMenu_(nsmenu)
-        self._button.setMenu_(nsmenu)
+        for button in (self._button, self._paste_button, self._enter_button):
+            button.setMenu_(nsmenu)
         self._button.setToolTip_(CONTEXT_MENU_TOOLTIP)
 
     def _apply_state(self, title, enabled):
