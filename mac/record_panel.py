@@ -15,6 +15,8 @@ from AppKit import (
     NSButton,
     NSColor,
     NSFloatingWindowLevel,
+    NSImage,
+    NSImageOnly,
     NSObject,
     NSPanel,
     NSScreen,
@@ -41,7 +43,11 @@ KEY_BUTTON_WIDTH = 44.0
 PANEL_WIDTH = (
     2 * BUTTON_INSET + RECORD_BUTTON_WIDTH + 2 * (BUTTON_GAP + KEY_BUTTON_WIDTH)
 )
-PASTE_BUTTON_TITLE = "📋"
+# SF Symbols: doc.on.clipboard is the icon macOS uses for Edit > Paste (the
+# 📋 emoji read as a trash can at this size). Titles are the fallback.
+PASTE_SYMBOL = "doc.on.clipboard"
+ENTER_SYMBOL = "return"
+PASTE_BUTTON_TITLE = "⌘V"
 ENTER_BUTTON_TITLE = "⏎"
 PASTE_TOOLTIP = "Paste the last transcript (⌘V) into the app you are typing in"
 ENTER_TOOLTIP = "Press Return in the app you are typing in"
@@ -97,6 +103,18 @@ def keep_panel_on_screen(panel):
         panel.setFrameOrigin_(origin)
 
 
+def _set_symbol(button, symbol_name, fallback_title, description):
+    image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+        symbol_name, description
+    )
+    if image is None:
+        button.setTitle_(fallback_title)
+        return
+    button.setTitle_("")
+    button.setImage_(image)
+    button.setImagePosition_(NSImageOnly)
+
+
 class _RecordButtonTarget(NSObject):
     """Objective-C target for the buttons; forwards clicks to Python callables."""
 
@@ -128,11 +146,11 @@ class RecordButtonPanel:
         self._button = self._build_button(x, RECORD_BUTTON_WIDTH, "toggle:")
         x += RECORD_BUTTON_WIDTH + BUTTON_GAP
         self._paste_button = self._build_button(x, KEY_BUTTON_WIDTH, "paste:")
-        self._paste_button.setTitle_(PASTE_BUTTON_TITLE)
+        _set_symbol(self._paste_button, PASTE_SYMBOL, PASTE_BUTTON_TITLE, "Paste")
         self._paste_button.setToolTip_(PASTE_TOOLTIP)
         x += KEY_BUTTON_WIDTH + BUTTON_GAP
         self._enter_button = self._build_button(x, KEY_BUTTON_WIDTH, "enter:")
-        self._enter_button.setTitle_(ENTER_BUTTON_TITLE)
+        _set_symbol(self._enter_button, ENTER_SYMBOL, ENTER_BUTTON_TITLE, "Enter")
         self._enter_button.setToolTip_(ENTER_TOOLTIP)
 
     # ── Construction ──────────────────────────────────────────────────────────
