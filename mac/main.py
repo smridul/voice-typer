@@ -289,6 +289,10 @@ class VoiceTyper(rumps.App):
         self.client    = None
         self._api_key_invalid = False
         self.recording = False
+        # True from Stop until the transcript is pasted (or dropped).
+        self._transcribing = False
+        # Set by the panel's Enter button: press Return once the text lands.
+        self._submit_after_paste = False
         self.frames    = []
         # The input stream outlives a single recording (see "Keep Mic Ready").
         # _stream_lock guards _stream, _stream_device and _mic_warm_timer.
@@ -829,6 +833,20 @@ class VoiceTyper(rumps.App):
         self._update_record_button(RECORD_BUTTON_RECORDING_TITLE)
 
     def _stop_and_transcribe(self):
+        # Set before `recording` goes False so an Enter click in between is
+        # still treated as "submit after paste".
+        self._transcribing = True
+        try:
+            pasted = self._stop_and_paste()
+        finally:
+            submit, self._submit_after_paste = self._submit_after_paste, False
+            self._transcribing = False
+        if pasted and submit:
+            time.sleep(0.1)  # Let the target app process ⌘V before Return
+            self._press_enter()
+
+    def _stop_and_paste(self):
+        """Stop recording, transcribe and paste. True if the text was pasted."""
         self.recording = False
         # The stream keeps running while warm, so take the frames out from
         # under the audio callback.
@@ -895,7 +913,7 @@ class VoiceTyper(rumps.App):
                 )
                 return
 
-            self._type_text(final_text)
+            return self._type_text(final_text)
         except AuthenticationError:
             self.client = None
             self._api_key_invalid = True
@@ -938,7 +956,15 @@ class VoiceTyper(rumps.App):
         threading.Thread(target=self._paste_clipboard, daemon=True).start()
 
     def _on_enter_button(self):
-        threading.Thread(target=self._press_enter, daemon=True).start()
+        # While recording, Enter means "stop, paste, then submit", so short
+        # messages take one click instead of Stop + Enter.
+        if self.recording:
+            self._submit_after_paste = True
+            threading.Thread(target=self._stop_and_transcribe, daemon=True).start()
+        elif self._transcribing:
+            self._submit_after_paste = True
+        else:
+            threading.Thread(target=self._press_enter, daemon=True).start()
 
     def _paste_clipboard(self):
         if not self._send_keystroke(PASTE_APPLESCRIPT):
@@ -956,7 +982,7 @@ class VoiceTyper(rumps.App):
         )
 
     def _type_text(self, text: str):
-        """Copy text to clipboard and paste it at the cursor position."""
+        """Copy text to clipboard and paste it at the cursor. True if pasted."""
         pyperclip.copy(text)
         time.sleep(0.15)  # Small pause so the clipboard settles
 
@@ -966,9 +992,10 @@ class VoiceTyper(rumps.App):
                 "Copied to Clipboard",
                 "Automatic paste was blocked. Press Cmd+V manually.",
             )
-            return
+            return False
 
         print(f"✅ Typed: {text}")
+        return True
 
     # ── Helpers ───────────────────────────────────────────────────────────────
     def _idle_status_title(self):

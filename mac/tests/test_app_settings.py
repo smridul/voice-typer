@@ -1517,6 +1517,76 @@ class FloatingRecordButtonTests(unittest.TestCase):
         self.assertEqual(thread.call_args.kwargs["target"], app._press_enter)
         thread.return_value.start.assert_called_once()
 
+    def test_enter_while_recording_stops_and_submits(self):
+        _main, app = self._run_app()
+        panel = FakeRecordPanel.instances[0]
+        app.recording = True
+
+        with patch("threading.Thread") as thread:
+            panel.on_enter()
+
+        self.assertTrue(app._submit_after_paste)
+        self.assertEqual(thread.call_args.kwargs["target"], app._stop_and_transcribe)
+        thread.return_value.start.assert_called_once()
+
+    def test_enter_while_transcribing_submits_after_paste(self):
+        # Clicking Stop then Enter quickly must not press Return before the
+        # transcript has landed.
+        _main, app = self._run_app()
+        panel = FakeRecordPanel.instances[0]
+        app._transcribing = True
+
+        with patch("threading.Thread") as thread:
+            panel.on_enter()
+
+        self.assertTrue(app._submit_after_paste)
+        thread.assert_not_called()
+
+    def _transcribe_with(self, submit, paste_ok=True, frames=True):
+        main = load_main_module([])
+        app = main.VoiceTyper()
+        app.frames = [object()] if frames else []
+        app.client = types.SimpleNamespace(
+            audio=types.SimpleNamespace(
+                transcriptions=types.SimpleNamespace(
+                    create=lambda **kwargs: types.SimpleNamespace(text="hi there")
+                )
+            )
+        )
+        main.convert_transcript = lambda client, transcript, **kwargs: transcript
+        calls = []
+        app._type_text = lambda text: calls.append(("type", text)) or paste_ok
+        app._press_enter = lambda: calls.append("enter")
+        app._submit_after_paste = submit
+        with patch.object(main.threading, "Timer"), patch.object(main.time, "sleep"):
+            app._stop_and_transcribe()
+        return app, calls
+
+    def test_submit_presses_enter_after_paste(self):
+        app, calls = self._transcribe_with(submit=True)
+
+        self.assertEqual(calls, [("type", "hi there"), "enter"])
+        self.assertFalse(app._submit_after_paste)
+        self.assertFalse(app._transcribing)
+
+    def test_plain_stop_does_not_press_enter(self):
+        _app, calls = self._transcribe_with(submit=False)
+
+        self.assertEqual(calls, [("type", "hi there")])
+
+    def test_failed_paste_does_not_press_enter(self):
+        app, calls = self._transcribe_with(submit=True, paste_ok=False)
+
+        self.assertEqual(calls, [("type", "hi there")])
+        self.assertFalse(app._submit_after_paste)
+
+    def test_submit_request_is_dropped_when_nothing_was_recorded(self):
+        app, calls = self._transcribe_with(submit=True, frames=False)
+
+        self.assertEqual(calls, [])
+        self.assertFalse(app._submit_after_paste)
+        self.assertFalse(app._transcribing)
+
     def _run_keystroke(self, method_name, returncode=0):
         notifications = []
         main = load_main_module(notifications)

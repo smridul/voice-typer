@@ -3,6 +3,8 @@
 ## Last completed work (2026-09-30)
 - User asked for 📋 Paste (⌘V) and ⏎ Enter buttons next to Record on the floating panel: for when they switch windows before the transcript pastes, and to submit after clicking Stop. Implemented (TDD, 138 tests pass), AppKit smoke-tested, rebuilt, installed, running under launchd. User confirmed both buttons work; committed.
 
+- Follow-ups the same day: the paste button uses the macOS `doc.on.clipboard` icon (the 📋 emoji read as a trash can); committed 6f147f7. Then: clicking Enter while recording now stops, pastes, then presses Return (one click for short messages). 144 tests pass; rebuilt and installed; user-confirmed working; committed.
+
 ## Earlier (2026-09-24)
 - User reported that with the Bluetooth DJI mic, the first ~3-5 s of each recording were lost: 🔴 showed immediately, but audio only started once a "Mac mini Speakers" banner appeared.
 - Root cause (measured with a probe script): the DJI over Bluetooth hands-free profile returns exact digital zeros for ~3.7 s after the stream opens.
